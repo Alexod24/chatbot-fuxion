@@ -15,7 +15,8 @@ export default function Home() {
             Tu Vendedor Inteligente 24/7
           </h1>
           <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto">
-            Visualiza el estado de tu agente, sube el conocimiento de tus productos y automatiza las ventas a través de WhatsApp.
+            Visualiza el estado de tu agente, sube el conocimiento de tus
+            productos y automatiza las ventas a través de WhatsApp.
           </p>
         </header>
 
@@ -29,11 +30,13 @@ export default function Home() {
               <h2 className="text-xl font-semibold">1. Conecta tu WhatsApp</h2>
             </div>
             <p className="text-neutral-400 mb-6 font-light">
-              Para vincular este agente a tu número de WhatsApp para atender a tus prospectos, corre el proyecto en tu consola.
+              Para vincular este agente a tu número de WhatsApp para atender a
+              tus prospectos, corre el proyecto en tu consola.
             </p>
             <div className="flex items-center justify-center p-8 bg-black/50 rounded-xl border border-neutral-800/50">
               <span className="text-sm text-neutral-500 text-center">
-                Ejecuta <code>npm run dev</code> en tu terminal y escanea el código QR generado para loguearte.
+                Ejecuta <code>npm run dev</code> en tu terminal y escanea el
+                código QR generado para loguearte.
               </span>
             </div>
           </div>
@@ -44,10 +47,14 @@ export default function Home() {
               <div className="p-3 bg-emerald-500/20 rounded-xl text-emerald-400">
                 <UploadCloud className="w-6 h-6" />
               </div>
-              <h2 className="text-xl font-semibold">2. Entrena al Agente (RAG)</h2>
+              <h2 className="text-xl font-semibold">
+                2. Entrena al Agente (RAG)
+              </h2>
             </div>
             <p className="text-neutral-400 mb-6 font-light">
-              Sube los beneficios, ingredientes y guiones de venta de tus productos. La IA contestará basándose en esto y hará cierres de venta.
+              Sube los beneficios, ingredientes y guiones de venta de tus
+              productos. La IA contestará basándose en esto y hará cierres de
+              venta.
             </p>
             <button className="w-full py-3 px-4 bg-white text-black font-medium rounded-xl hover:bg-neutral-200 transition-colors flex items-center justify-center">
               <UploadCloud className="w-4 h-4 mr-2" />
