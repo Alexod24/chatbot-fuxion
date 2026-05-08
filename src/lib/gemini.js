@@ -1,36 +1,57 @@
 const { GoogleGenAI } = require('@google/genai');
+const supabase = require('./supabase');
 
-// Ensure GEMINI_API_KEY is available in the environment scope
-async function generateChatbotResponse(message, contextData) {
-    // Initialize inside the function so it always uses the latest GEMINI_API_KEY from .env
+/**
+ * Generates a chatbot response using Gemini 1.5 Flash.
+ * @param {string} message - The message context and user input.
+ * @param {string} systemInstruction - The expert prompt for the bot.
+ * @param {string} userId - Optional userId to track usage in Supabase.
+ */
+async function generateChatbotResponse(message, systemInstruction, userId = null) {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const systemInstruction = contextData; 
-    console.log("--- GENERATING RESPONSE WITH GEMINI 2.5 FLASH LITE ---");
+    
+    // Using gemini-1.5-flash as it's the most cost-effective for production
+    const model = ai.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: systemInstruction 
+    });
+
+    console.log(`--- GENERATING RESPONSE WITH GEMINI 1.5 FLASH (User: ${userId || 'anonymous'}) ---`);
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'models/gemini-2.5-flash-lite',
-            contents: [{ role: 'user', parts: [{ text: message }] }],
-            config: {
-                systemInstruction: systemInstruction,
-            }
-        });
+        const result = await model.generateContent(message);
+        const response = await result.response;
+        const text = response.text();
 
-        return response.text;
+        // Usage tracking in Supabase
+        if (userId && userId !== 'default') {
+            try {
+                const { error } = await supabase.from('usage_logs').insert({
+                    user_id: userId,
+                    request_type: 'chat',
+                    tokens_input: response.usageMetadata?.promptTokenCount || 0,
+                    tokens_output: response.usageMetadata?.candidatesTokenCount || 0
+                });
+                if (error) console.error("[Supabase Usage Log Error]:", error);
+            } catch (logErr) {
+                console.error("[Usage Logging Exception]:", logErr);
+            }
+        }
+
+        return text;
     } catch (error) {
         console.error("Gemini API Error:", error);
         return "Lo siento, experimenté un problema momentáneo procesando el mensaje. ¿Podemos intentar de nuevo en un momento?";
     }
 }
 
-async function generateEmbedding(text) {
-    try {
-        const response = await ai.models.embedContent({
-            model: 'text-embedding-004',
-            contents: text,
-        });
 
-        return response.embeddings[0].values;
+async function generateEmbedding(text) {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    try {
+        const model = ai.getGenerativeModel({ model: 'text-embedding-004' });
+        const result = await model.embedContent(text);
+        return result.embedding.values;
     } catch (error) {
         console.error("Gemini Embeddings Error:", error);
         throw error;
@@ -41,3 +62,4 @@ module.exports = {
     generateChatbotResponse,
     generateEmbedding
 };
+
