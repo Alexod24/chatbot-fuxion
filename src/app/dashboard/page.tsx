@@ -15,46 +15,65 @@ import {
   Settings,
   Zap,
   Save,
-  CheckCircle
+  CheckCircle,
+  Loader2
 } from "lucide-react";
 
 export default function DashboardPage() {
   const [userName, setUserName] = useState("Usuario");
+  const [userId, setUserId] = useState(null);
   const [prompt, setPrompt] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
-
   const [prospects, setProspects] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Cargar usuario
     const userStr = localStorage.getItem("user");
     if (userStr) {
       const user = JSON.parse(userStr);
-      setUserName(user.name || "Usuario");
+      setUserName(user.full_name || user.name || "Usuario");
+      setUserId(user.id || 'default');
+      
+      // Initialize WhatsApp for this user if not already done
+      if (user.id) {
+          fetch("/api/whatsapp/init", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId: user.id })
+          });
+      }
     }
 
-    // Cargar config del bot
-    fetch("/api/config")
-      .then(res => res.json())
-      .then(data => {
-        if (data.expert_prompt) setPrompt(data.expert_prompt);
-      });
+    const fetchData = async () => {
+        const uId = JSON.parse(localStorage.getItem("user"))?.id || 'default';
+        
+        // Cargar config del bot
+        fetch(`/api/config?userId=${uId}`)
+          .then(res => res.json())
+          .then(data => {
+            if (data.expert_prompt) setPrompt(data.expert_prompt);
+          });
 
-    // Cargar prospectos iniciales
-    fetch("/api/prospects")
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) setProspects(data);
-      });
+        // Cargar prospectos iniciales
+        fetch(`/api/prospects?userId=${uId}`)
+          .then(res => res.json())
+          .then(data => {
+            if (Array.isArray(data)) setProspects(data);
+            setIsLoading(false);
+          });
+    };
+
+    fetchData();
 
     // Polling para actualizar cada 10s
     const interval = setInterval(() => {
-      fetch("/api/prospects")
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setProspects(data);
-        });
+        const uId = JSON.parse(localStorage.getItem("user"))?.id || 'default';
+        fetch(`/api/prospects?userId=${uId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) setProspects(data);
+            });
     }, 10000);
 
     return () => clearInterval(interval);
@@ -66,7 +85,7 @@ export default function DashboardPage() {
       await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expert_prompt: prompt })
+        body: JSON.stringify({ userId, expert_prompt: prompt })
       });
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 3000);
@@ -90,6 +109,14 @@ export default function DashboardPage() {
     if (diffHours < 24) return `Hace ${diffHours} h`;
     return date.toLocaleDateString();
   };
+
+  if (isLoading) {
+      return (
+          <div className="flex h-screen bg-black text-white items-center justify-center">
+              <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+          </div>
+      );
+  }
 
   return (
     <div className="flex min-h-screen bg-black text-white">
@@ -116,7 +143,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-3 pl-6 border-l border-white/5">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-bold">{userName}</p>
-                <p className="text-xs text-muted-foreground">Plan Enterprise</p>
+                <p className="text-xs text-muted-foreground">Plan Pro</p>
               </div>
               <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 border border-white/20" />
             </div>
@@ -128,8 +155,8 @@ export default function DashboardPage() {
           {/* Welcome Section */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
-              <h1 className="text-4xl font-bold tracking-tight mb-2">¡Hola, {userName}! 👋</h1>
-              <p className="text-muted-foreground">Aquí tienes el control total de tu agente Fuxion AI.</p>
+              <h1 className="text-4xl font-bold tracking-tight mb-2">¡Hola, {userName.split(' ')[0]}! 👋</h1>
+              <p className="text-muted-foreground">Aquí tienes el control de tu agente Fuxion AI.</p>
             </div>
             <div className="flex items-center gap-3 bg-card border border-white/5 p-2 rounded-2xl">
               <button className="px-4 py-2 bg-white/5 rounded-xl text-sm font-medium hover:bg-white/10 transition-colors">Hoy</button>
@@ -139,21 +166,21 @@ export default function DashboardPage() {
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard label="Conversaciones" value={prospects.length} icon={MessageSquare} trend={{ value: 100, isUp: true }} />
-            <StatCard label="Prospectos" value={prospects.length} icon={Users} trend={{ value: 100, isUp: true }} />
-            <StatCard label="Tasa Cierre" value="32%" icon={TrendingUp} trend={{ value: 4, isUp: true }} />
-            <StatCard label="Velocidad" value="1.2s" icon={Clock} trend={{ value: 2, isUp: false }} />
+            <StatCard label="Conversaciones" value={prospects.length} icon={MessageSquare} trend={{ value: 12, isUp: true }} />
+            <StatCard label="Prospectos" value={prospects.length} icon={Users} trend={{ value: 8, isUp: true }} />
+            <StatCard label="Tasa Cierre" value="24%" icon={TrendingUp} trend={{ value: 4, isUp: true }} />
+            <StatCard label="Velocidad" value="1.5s" icon={Clock} trend={{ value: 2, isUp: false }} />
           </div>
 
           {/* Bot Status Section */}
-          <BotStatus />
+          <BotStatus userId={userId} />
 
           {/* Activity and Config Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Real Prospects List */}
             <div className="lg:col-span-2 glass-dark rounded-3xl border border-white/5 p-8 flex flex-col">
               <div className="flex items-center justify-between mb-8">
-                <h3 className="text-xl font-bold">Actividad Reciente (Prospectos Reales)</h3>
+                <h3 className="text-xl font-bold">Actividad Reciente</h3>
                 <button className="text-sm text-indigo-400 hover:underline">Ver todo</button>
               </div>
               
@@ -167,13 +194,13 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2">
                         <p className="font-bold">{prospect.name}</p>
                         <span className="text-[10px] px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-white/40 uppercase tracking-tighter">
-                          {prospect.id.split('@')[0]}
+                          {prospect.whatsapp_number?.split('@')[0] || 'whatsapp'}
                         </span>
                       </div>
-                      <p className="text-sm text-muted-foreground line-clamp-1 italic">"{prospect.lastMessage}"</p>
+                      <p className="text-sm text-muted-foreground line-clamp-1 italic">"{prospect.last_message}"</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs font-medium text-white/40 mb-1">{formatTime(prospect.timestamp)}</p>
+                      <p className="text-xs font-medium text-white/40 mb-1">{formatTime(prospect.created_at)}</p>
                       <span className="text-[10px] px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg border border-emerald-500/20 font-bold uppercase tracking-wider">
                         {prospect.status}
                       </span>
@@ -188,26 +215,37 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Quick Actions / Summary */}
-            <div className="glass-dark rounded-3xl border border-white/5 p-8 flex flex-col justify-between">
-              <div>
-                <h3 className="text-xl font-bold mb-4">Meta de Ventas</h3>
-                <div className="relative h-4 w-full bg-white/5 rounded-full overflow-hidden mb-4">
-                  <div className="absolute top-0 left-0 h-full w-[75%] bg-gradient-to-r from-indigo-500 to-purple-500" />
-                </div>
-                <div className="flex justify-between text-sm mb-8">
-                  <span className="text-muted-foreground">Progreso: 75%</span>
-                  <span className="font-bold">S/ 7,500 / S/ 10,000</span>
-                </div>
-              </div>
-
-              <div className="p-6 bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl shadow-xl glow-indigo">
-                <p className="font-bold mb-2">¡Sube al siguiente nivel!</p>
-                <p className="text-xs text-white/80 mb-4">Libera el poder de la IA con el plan Enterprise.</p>
-                <button className="w-full py-3 bg-white text-black font-bold rounded-xl text-sm hover:bg-neutral-100 transition-colors">
-                  Upgrade Plan
-                </button>
-              </div>
+            {/* Config Section (Quick Edit) */}
+            <div className="glass-dark rounded-3xl border border-white/5 p-8 flex flex-col">
+              <h3 className="text-xl font-bold mb-6 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-indigo-400" />
+                Prompt del Asesor
+              </h3>
+              <textarea 
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                className="flex-1 bg-black/40 border border-white/10 rounded-2xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 mb-6 resize-none placeholder:text-white/10"
+                placeholder="Escribe aquí las instrucciones de tu bot..."
+              />
+              <button 
+                onClick={handleSaveConfig}
+                disabled={isSaving}
+                className="w-full py-4 bg-indigo-600 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-500 transition-all shadow-lg glow-indigo disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : showSaved ? (
+                  <>
+                    <CheckCircle className="w-5 h-5" />
+                    ¡Guardado!
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-5 h-5" />
+                    Guardar Cambios
+                  </>
+                )}
+              </button>
             </div>
           </div>
 
@@ -216,3 +254,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

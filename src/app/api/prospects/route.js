@@ -1,16 +1,27 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import supabase from '@/lib/supabase';
 
-export async function GET() {
+export async function GET(request) {
     try {
-        const prospectsPath = path.join(process.cwd(), 'prospects.json');
-        if (!fs.existsSync(prospectsPath)) {
-            return NextResponse.json([]);
+        const { searchParams } = new URL(request.url);
+        const userId = searchParams.get('userId');
+
+        let query = supabase
+            .from('prospects')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (userId) {
+            query = query.eq('user_id', userId);
         }
-        const prospects = JSON.parse(fs.readFileSync(prospectsPath, 'utf8'));
-        return NextResponse.json(prospects);
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+        return NextResponse.json(data);
     } catch (error) {
-        return NextResponse.json({ error: 'Failed to read prospects' }, { status: 500 });
+        console.error('API Prospects Error:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+

@@ -5,7 +5,11 @@ import { QrCode, CheckCircle2, AlertCircle, RefreshCw, Smartphone } from "lucide
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-export function BotStatus() {
+interface BotStatusProps {
+    userId?: string | null;
+}
+
+export function BotStatus({ userId = 'default' }: BotStatusProps) {
   const [status, setStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qr, setQr] = useState<string | null>(null);
   const [showQR, setShowQR] = useState(false);
@@ -13,7 +17,7 @@ export function BotStatus() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const response = await fetch("/api/whatsapp/status");
+        const response = await fetch(`/api/whatsapp/status?userId=${userId || 'default'}`);
         const data = await response.json();
         
         if (data.state === "CONNECTED" || data.state === "AUTHENTICATED") {
@@ -39,14 +43,17 @@ export function BotStatus() {
     fetchStatus(); // Initial fetch
 
     return () => clearInterval(interval);
-  }, []);
+  }, [userId]);
 
   const toggleConnect = () => {
-    // In this implementation, the backend is always trying to connect or ready.
-    // We just show/hide based on status.
-    if (status === "disconnected") {
-      setStatus("connecting");
-      // Backend should handle initialization
+    // Backend should handle initialization
+    if (status === "disconnected" && userId) {
+        setStatus("connecting");
+        fetch("/api/whatsapp/init", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId })
+        });
     }
   };
 
@@ -147,3 +154,4 @@ export function BotStatus() {
     </div>
   );
 }
+

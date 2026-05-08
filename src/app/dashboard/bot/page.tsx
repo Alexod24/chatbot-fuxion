@@ -8,40 +8,52 @@ import {
   Save,
   CheckCircle,
   Zap,
-  Info
+  Info,
+  Loader2
 } from "lucide-react";
 
 export default function BotConfigPage() {
   const [userName, setUserName] = useState("Usuario");
+  const [userId, setUserId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
 
   useEffect(() => {
-    // Cargar usuario
-    const userStr = localStorage.getItem("user");
+    // Cargar usuario de forma segura
+    const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
     if (userStr) {
-      const user = JSON.parse(userStr);
-      setUserName(user.name || "Usuario");
+      try {
+        const user = JSON.parse(userStr);
+        setUserName(user.full_name || user.name || "Usuario");
+        setUserId(user.id || 'default');
+      } catch (e) {
+        console.error("Error parsing user from localStorage", e);
+      }
     }
+  }, []);
 
-    // Cargar config del bot
-    fetch("/api/config")
+  useEffect(() => {
+    if (!userId) return;
+
+    // Cargar config del bot específica del usuario
+    fetch(`/api/config?userId=${userId}`)
       .then(res => res.json())
       .then(data => {
         if (data.expert_prompt) setPrompt(data.expert_prompt);
       });
-  }, []);
+  }, [userId]);
 
   const handleSaveConfig = async () => {
+    if (!userId) return;
     setIsSaving(true);
     try {
       await fetch("/api/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          expert_prompt: prompt,
-          ownerEmail: localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")).email : 'general'
+          userId,
+          expert_prompt: prompt
         })
       });
       setShowSaved(true);
@@ -96,16 +108,16 @@ export default function BotConfigPage() {
                 )}
                 <button 
                   onClick={handleSaveConfig}
-                  disabled={isSaving}
+                  disabled={isSaving || !userId}
                   className="px-8 py-3 bg-white text-black font-bold rounded-2xl hover:bg-neutral-200 transition-all flex items-center gap-2 shadow-2xl glow-white disabled:opacity-50"
                 >
-                  <Save className="w-5 h-5" />
+                  {isSaving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
                   {isSaving ? "Guardando..." : "Guardar Cambios"}
                 </button>
             </div>
           </div>
 
-          <BotStatus />
+          <BotStatus userId={userId} />
 
           {/* Editor Grid */}
           <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
@@ -129,7 +141,7 @@ export default function BotConfigPage() {
             <div className="space-y-6">
                 <div className="glass-dark rounded-3xl border border-white/5 p-6 space-y-4">
                     <div className="flex items-center gap-2 text-indigo-400">
-                        <Info className="w-5 h-5" />
+                        <span className="w-5 h-5 flex items-center justify-center"><Info className="w-full h-full" /></span>
                         <h3 className="font-bold">Tips de Vendedor</h3>
                     </div>
                     <ul className="text-sm space-y-3 text-muted-foreground">
@@ -152,7 +164,7 @@ export default function BotConfigPage() {
                     <Zap className="w-8 h-8 text-indigo-500 mb-3" />
                     <h3 className="font-bold mb-1">Entrenamiento Live</h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                        Tu bot está usando actualmente el modelo 2.5 Flash Lite para respuestas ultra rápidas.
+                        Tu bot está usando actualmente el modelo 1.5 Flash para respuestas ultra rápidas y económicas.
                     </p>
                 </div>
             </div>
@@ -162,3 +174,4 @@ export default function BotConfigPage() {
     </div>
   );
 }
+
