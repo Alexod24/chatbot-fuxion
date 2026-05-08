@@ -21,12 +21,13 @@ import {
 
 export default function DashboardPage() {
   const [userName, setUserName] = useState("Usuario");
-  const [userId, setUserId] = useState(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
-  const [prospects, setProspects] = useState([]);
+  const [prospects, setProspects] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
 
   useEffect(() => {
     const userStr = localStorage.getItem("user");
@@ -46,7 +47,17 @@ export default function DashboardPage() {
     }
 
     const fetchData = async () => {
-        const uId = JSON.parse(localStorage.getItem("user"))?.id || 'default';
+        const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
+        let uId = 'default';
+        
+        if (userStr) {
+            try {
+                const user = JSON.parse(userStr);
+                uId = user.id || 'default';
+            } catch (e) {
+                console.error("Error parsing user", e);
+            }
+        }
         
         // Cargar config del bot
         fetch(`/api/config?userId=${uId}`)
@@ -68,13 +79,21 @@ export default function DashboardPage() {
 
     // Polling para actualizar cada 10s
     const interval = setInterval(() => {
-        const uId = JSON.parse(localStorage.getItem("user"))?.id || 'default';
+        const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
+        let uId = 'default';
+        if (userStr) {
+            try {
+                uId = JSON.parse(userStr).id || 'default';
+            } catch(e) {}
+        }
+        
         fetch(`/api/prospects?userId=${uId}`)
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) setProspects(data);
             });
     }, 10000);
+
 
     return () => clearInterval(interval);
   }, []);
@@ -96,11 +115,11 @@ export default function DashboardPage() {
     }
   };
 
-  const formatTime = (isoString) => {
+  const formatTime = (isoString: any) => {
     if (!isoString) return "";
     const date = new Date(isoString);
     const now = new Date();
-    const diffMs = now - date;
+    const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
     
     if (diffMins < 1) return "Ahora";
@@ -109,6 +128,7 @@ export default function DashboardPage() {
     if (diffHours < 24) return `Hace ${diffHours} h`;
     return date.toLocaleDateString();
   };
+
 
   if (isLoading) {
       return (

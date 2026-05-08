@@ -20,16 +20,12 @@ export default function LoginPage() {
 
     // Validación de credenciales solicitadas
     const validUsers = [
-      { email: "admin@gmail.com", password: "123455", role: "admin" },
-      { email: "kenedy@gmail.com", password: "123456", role: "cliente" }
+      { email: "admin@gmail.com", password: "123455", role: "admin", name: "Alex OD" },
+      { email: "kenedy@gmail.com", password: "123456", role: "cliente", name: "Kenedy" }
     ];
 
     const user = validUsers.find(u => u.email === email && u.password === password);
-    
-    // Asignar nombre según el email
-    if (user) {
-      user.name = email === "admin@gmail.com" ? "Alex OD" : "Kenedy";
-    }
+
 
     setTimeout(() => {
       if (user) {

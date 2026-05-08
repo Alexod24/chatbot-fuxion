@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 export default function MediaPage() {
-  const [audios, setAudios] = useState([]);
+  const [audios, setAudios] = useState<any[]>([]);
   const [userEmail, setUserEmail] = useState("");
   const [uploading, setUploading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -27,14 +27,15 @@ export default function MediaPage() {
     }
   }, []);
 
-  const fetchAudios = async (email) => {
+  const fetchAudios = async (email: any) => {
     const res = await fetch(`/api/media/upload?email=${email}`);
     const data = await res.json();
     setAudios(data);
   };
 
-  const handleFileUpload = async (e, tag) => {
+  const handleFileUpload = async (e: any, tag: any) => {
     const file = e.target.files[0];
+
     if (!file) return;
 
     setUploading(true);

@@ -13,11 +13,14 @@ import {
 } from "lucide-react";
 
 export default function MessagesPage() {
-  const [prospects, setProspects] = useState([]);
-  const [selectedChat, setSelectedChat] = useState(null);
+  const [prospects, setProspects] = useState<any[]>([]);
+  const [selectedChat, setSelectedChat] = useState<any>(null);
 
   useEffect(() => {
-    fetch("/api/prospects")
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    const userId = user.id || 'default';
+    
+    fetch(`/api/prospects?userId=${userId}`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -26,6 +29,7 @@ export default function MessagesPage() {
         }
       });
   }, []);
+
 
   return (
     <div className="flex h-screen bg-black text-white overflow-hidden">

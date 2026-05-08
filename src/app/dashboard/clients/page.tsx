@@ -18,12 +18,14 @@ import {
 } from "lucide-react";
 
 export default function ClientsPage() {
-  const [clients, setClients] = useState([]);
+  const [clients, setClients] = useState<any[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newClient, setNewClient] = useState({ name: "", email: "", password: "", payment: 50 });
+  const [stats, setStats] = useState({ totalRequests: 0, todayRequests: 0, activeSessions: 0 });
+
 
   useEffect(() => {
     const userStr = localStorage.getItem("user");
@@ -33,6 +35,7 @@ export default function ClientsPage() {
       if (user.role === "admin" || user.email === "admin@gmail.com") {
         setIsAdmin(true);
         fetchClients();
+        fetchStats();
       } else {
         setIsLoading(false);
       }
@@ -40,6 +43,16 @@ export default function ClientsPage() {
       setIsLoading(false);
     }
   }, []);
+
+  const fetchStats = async () => {
+    try {
+      const res = await fetch("/api/admin/stats");
+      const data = await res.json();
+      if (!data.error) setStats(data);
+    } catch (err) {
+      console.error("Error fetching stats:", err);
+    }
+  };
 
   const fetchClients = async () => {
     setIsLoading(true);
@@ -56,7 +69,8 @@ export default function ClientsPage() {
     }
   };
 
-  const toggleStatus = async (id, currentIsActive) => {
+
+  const toggleStatus = async (id: any, currentIsActive: any) => {
     const newStatus = !currentIsActive;
     await fetch("/api/clients", {
       method: "POST",
@@ -66,7 +80,7 @@ export default function ClientsPage() {
     fetchClients();
   };
 
-  const handleAddClient = async (e) => {
+  const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
@@ -88,6 +102,7 @@ export default function ClientsPage() {
       setIsSubmitting(false);
     }
   };
+
 
   if (isLoading) {
     return (
@@ -154,7 +169,7 @@ export default function ClientsPage() {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Peticiones Hoy</p>
-              <p className="text-2xl font-bold">1,240</p>
+              <p className="text-2xl font-bold">{stats.todayRequests.toLocaleString()}</p>
             </div>
           </div>
           <div className="glass-dark p-6 rounded-3xl border border-white/5 flex items-center gap-4">
@@ -162,11 +177,12 @@ export default function ClientsPage() {
               <Users className="w-6 h-6 text-blue-500" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Total Usuarios</p>
-              <p className="text-2xl font-bold">{clients.length}</p>
+              <p className="text-sm text-muted-foreground">Peticiones Totales</p>
+              <p className="text-2xl font-bold">{stats.totalRequests.toLocaleString()}</p>
             </div>
           </div>
         </div>
+
 
         {/* Clients Table */}
         <div className="glass-dark rounded-[2rem] border border-white/5 overflow-hidden">
