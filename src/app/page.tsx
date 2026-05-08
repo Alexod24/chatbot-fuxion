@@ -1,68 +1,71 @@
-import { Bot, QrCode, UploadCloud, Webhook } from "lucide-react";
+import { Zap, ArrowRight, Bot, Shield, Globe } from "lucide-react";
+import Link from "next/link";
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-50 selection:bg-indigo-500/30">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#4f4f4f2e_1px,transparent_1px),linear-gradient(to_bottom,#4f4f4f2e_1px,transparent_1px)] bg-[size:14px_24px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]"></div>
+    <main className="min-h-screen bg-black text-white relative overflow-hidden">
+      {/* Background elements */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[600px] bg-[radial-gradient(circle_at_50%_0%,#312e81,transparent_50%)] opacity-50" />
+      <div className="absolute top-0 left-0 w-full h-full bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:40px_40px]" />
 
-      <div className="relative pt-24 pb-12 w-full max-w-7xl mx-auto px-6">
-        <header className="flex flex-col items-center text-center space-y-6 mb-20 animate-fade-in">
-          <div className="inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-sm font-medium text-indigo-300">
-            <Bot className="w-4 h-4 mr-2" />
-            <span>Fuxion AI Agent Dashboard</span>
-          </div>
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-500">
-            Tu Vendedor Inteligente 24/7
-          </h1>
-          <p className="text-lg md:text-xl text-neutral-400 max-w-2xl mx-auto">
-            Visualiza el estado de tu agente, sube el conocimiento de tus
-            productos y automatiza las ventas a través de WhatsApp.
-          </p>
-        </header>
-
-        <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
-          {/* Dashboard Panel 1 */}
-          <div className="relative group rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl transition-all hover:bg-neutral-900/80 hover:border-indigo-500/50">
-            <div className="flex items-center space-x-4 mb-6">
-              <div className="p-3 bg-indigo-500/20 rounded-xl text-indigo-400">
-                <QrCode className="w-6 h-6" />
-              </div>
-              <h2 className="text-xl font-semibold">1. Conecta tu WhatsApp</h2>
-            </div>
-            <p className="text-neutral-400 mb-6 font-light">
-              Para vincular este agente a tu número de WhatsApp para atender a
-              tus prospectos, corre el proyecto en tu consola.
-            </p>
-            <div className="flex items-center justify-center p-8 bg-black/50 rounded-xl border border-neutral-800/50">
-              <span className="text-sm text-neutral-500 text-center">
-                Ejecuta <code>npm run dev</code> en tu terminal y escanea el
-                código QR generado para loguearte.
-              </span>
-            </div>
-          </div>
-
-          {/* Dashboard Panel 2 */}
-          <div className="relative group rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8 backdrop-blur-xl transition-all hover:bg-neutral-900/80 hover:border-emerald-500/50">
-            <div className="flex items-center space-x-4 mb-6">
-              <div className="p-3 bg-emerald-500/20 rounded-xl text-emerald-400">
-                <UploadCloud className="w-6 h-6" />
-              </div>
-              <h2 className="text-xl font-semibold">
-                2. Entrena al Agente (RAG)
-              </h2>
-            </div>
-            <p className="text-neutral-400 mb-6 font-light">
-              Sube los beneficios, ingredientes y guiones de venta de tus
-              productos. La IA contestará basándose en esto y hará cierres de
-              venta.
-            </p>
-            <button className="w-full py-3 px-4 bg-white text-black font-medium rounded-xl hover:bg-neutral-200 transition-colors flex items-center justify-center">
-              <UploadCloud className="w-4 h-4 mr-2" />
-              Ir a Base de Conocimientos
-            </button>
-          </div>
+      <nav className="relative z-10 px-8 py-6 flex justify-between items-center max-w-7xl mx-auto">
+        <div className="flex items-center gap-2">
+          <Zap className="w-8 h-8 text-indigo-500 fill-indigo-500" />
+          <span className="text-xl font-bold tracking-tighter">Fuxion AI</span>
         </div>
-      </div>
+        <div className="flex items-center gap-8">
+          <Link href="#" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Características</Link>
+          <Link href="#" className="text-sm font-medium text-white/60 hover:text-white transition-colors">Precios</Link>
+          <Link href="/login" className="px-5 py-2.5 bg-white text-black text-sm font-bold rounded-full hover:bg-neutral-200 transition-all">
+            Dashboard
+          </Link>
+        </div>
+      </nav>
+
+      <section className="relative z-10 pt-32 pb-20 px-8 flex flex-col items-center text-center max-w-5xl mx-auto">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-indigo-400 text-sm font-medium mb-8 animate-fade-in">
+          <Bot className="w-4 h-4" />
+          <span>Vendedor Inteligente con IA para WhatsApp</span>
+        </div>
+        
+        <h1 className="text-6xl md:text-8xl font-bold tracking-tighter mb-8 bg-clip-text text-transparent bg-gradient-to-b from-white to-white/40">
+          Escala tus ventas <br /> sin mover un dedo.
+        </h1>
+        
+        <p className="text-lg md:text-xl text-white/60 max-w-2xl mb-12 leading-relaxed">
+          Fuxion AI es el agente inteligente que atiende, califica y cierra ventas 24/7. 
+          Vuelve a ser dueño de tu tiempo mientras tu bot genera ingresos.
+        </p>
+
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Link href="/login" className="px-8 py-4 bg-indigo-600 text-white font-bold rounded-2xl flex items-center gap-2 hover:bg-indigo-700 transition-all glow-indigo group">
+            Empezar Ahora
+            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+          </Link>
+          <button className="px-8 py-4 bg-white/5 border border-white/10 text-white font-bold rounded-2xl hover:bg-white/10 transition-all">
+            Ver Demo en Vivo
+          </button>
+        </div>
+      </section>
+
+      <section className="relative z-10 grid md:grid-cols-3 gap-8 px-8 max-w-7xl mx-auto pb-32">
+        <div className="p-8 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-sm">
+          <Shield className="w-10 h-10 text-indigo-400 mb-6" />
+          <h3 className="text-xl font-bold mb-3">Seguridad Total</h3>
+          <p className="text-white/60 leading-relaxed">Encriptación de punta a punta en todas tus conversaciones de WhatsApp.</p>
+        </div>
+        <div className="p-8 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-sm">
+          <Globe className="w-10 h-10 text-purple-400 mb-6" />
+          <h3 className="text-xl font-bold mb-3">Multilingüe</h3>
+          <p className="text-white/60 leading-relaxed">Atiende a clientes en cualquier idioma con la potencia de Gemini 1.5 Pro.</p>
+        </div>
+        <div className="p-8 rounded-3xl bg-white/5 border border-white/5 backdrop-blur-sm">
+          <Bot className="w-10 h-10 text-emerald-400 mb-6" />
+          <h3 className="text-xl font-bold mb-3">Entrenamiento RAG</h3>
+          <p className="text-white/60 leading-relaxed">Sube tus PDFs o webs y el bot aprenderá todo sobre tus productos en segundos.</p>
+        </div>
+      </section>
     </main>
   );
 }
+
