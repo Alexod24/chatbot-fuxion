@@ -25,10 +25,16 @@ export default function LoginPage() {
     ];
 
     const user = validUsers.find(u => u.email === email && u.password === password);
+    
+    // Asignar nombre según el email
+    if (user) {
+      user.name = email === "admin@gmail.com" ? "Alex OD" : "Kenedy";
+    }
 
     setTimeout(() => {
       if (user) {
-        // En un caso real aquí guardaríamos la sesión
+        // Guardar sesión local
+        localStorage.setItem("user", JSON.stringify(user));
         router.push("/dashboard");
       } else {
         setError("Credenciales incorrectas. Por favor intenta de nuevo.");

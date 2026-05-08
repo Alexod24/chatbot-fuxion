@@ -1,0 +1,11 @@
+[
+  {
+    "id": "1",
+    "name": "Kenedy",
+    "email": "kenedy@gmail.com",
+    "payment": 50,
+    "startDate": "2026-05-08T04:55:30.676Z",
+    "expiryDate": "2026-06-07T04:55:30.676Z",
+    "status": "active"
+  }
+]

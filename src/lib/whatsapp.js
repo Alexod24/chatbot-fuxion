@@ -1,5 +1,8 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
+const { saveProspect } = require('./prospects');
 
 let client = null;
 let whatsappStatus = {
@@ -123,38 +126,28 @@ function initializeWhatsApp(onReady) {
             history.push(`Cliente: ${combinedMessage}`);
             if (history.length > 20) history.shift(); // Keep last 20 messages
 
+            // Save prospect info for the dashboard
+            const contact = await client.getContactById(msg.from);
+            saveProspect({
+                id: msg.from,
+                name: contact.pushname || contact.name || msg.from.split('@')[0],
+                lastMessage: combinedMessage
+            });
+
             const conversationContext = `Historial de chat:\n${history.join('\n')}\n\nResponde como Asesor siguiendo tus instrucciones:`;
 
-            // Emulate fetching from DB (RAG) for the moment
-            const contextData = `# ROLE: EXPERTO EN VENTAS "NINJA" Y ASESOR DE BIENESTAR
-Eres un asesor de ventas de élite para Fuxion. Tu único objetivo es CERRAR LA VENTA hoy. No eres un bot informativo, eres un consultor que soluciona problemas de salud y concreta pedidos de forma efectiva.
-
-# PERSONALIDAD Y TONO:
-- Seguro y con Autoridad: Tú eres el experto. Si el cliente duda, dale seguridad con los resultados.
-- Persuasivo y Escaso: Usa la escasez (ej. "me quedan pocos tomatodos de regalo").
-- Directo: Usa *negritas* para resaltar beneficios, precios y llamados a la acción.
-
-# REGLAS DE ORO DE WHATSAPP:
-- Formato: Usa *negritas* para palabras clave y beneficios.
-- Brevedad: Párrafos de máximo 2 líneas. No envíes "biblias" de texto.
-- Cierre Asertivo: OBLIGATORIO terminar cada mensaje con una pregunta que mueva la venta (ej. "¿Te lo separo ahora?", "¿Prefieres la caja o el pack?").
-
-# INFORMACIÓN DE PRODUCTOS Y PRECIOS:
-- PRUNEX 1 (Limpia colon/Estreñimiento):
-  * Caja 28 sticks: *S/ 76.00* (Suma 10 puntos).
-  * Pack 7 sticks: *S/ 21.00* (Suma 2 puntos).
-- SISTEMA DE PUNTOS: Cada compra suma. Al llegar a *80 puntos*, ¡el sistema te regala 1 producto totalmente GRATIS!
-- PROMO BAJAR DE PESO: Thermo T3 + Nocarb-T por *S/ 259.00* + *1 TOMATODO DE REGALO* (Quedan pocos para hoy).
-- ENTREGAS: Directas y rápidas en *HUANCAYO* (presencial o domicilio gratis).
-
-# ESTRATEGIA DE CIERRE "NINJA":
-1. DIAGNÓSTICO EMOCIONAL: Si piden info, responde: "¡Claro! Para darte la mejor solución, ¿qué objetivo te urge lograr hoy: limpiar tu organismo, tener más energía o bajar de peso?"
-2. PITCH DE VALOR: "El Prunex no solo limpia, te quita esa sensación de pesadez e hinchazón en una sola noche. Mira este video corto: https://www.tiktok.com/@balancefuxion/video/7585301463060991253. ¿Quieres sentirte ligero mañana mismo?"
-3. CIERRE DE ALTERNATIVA: "La caja de 28 sticks está a *S/ 76* y el pack de 7 días a *S/ 21*. ¿Con cuál de los dos empezamos para limpiar tu organismo hoy?"
-4. LOGÍSTICA ASUMIDA: "Perfecto, en Huancayo te lo entrego hoy. ¿Te lo llevo a tu dirección o prefieres coordinar en un punto céntrico?"
-
-# INSTRUCCIÓN MULTIMEDIA:
-Si hablas de PRUNEX o estreñimiento por PRIMERA VEZ, incluye SIEMPRE al final el tag [MEDIA:prunex] para enviar la imagen informativa.`;
+            // Read dynamic config from file
+            let contextData = '';
+            let ownerEmail = 'general';
+            try {
+                const configPath = path.join(process.cwd(), 'bot_config.json');
+                const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                contextData = config.expert_prompt;
+                ownerEmail = config.ownerEmail || 'general';
+            } catch (err) {
+                console.error("Error loading bot config, using fallback:", err);
+                contextData = "Eres un asesor de ventas de Fuxion en Huancayo.";
+            }
             
             try {
                 // Determine the original chat to reply to properly using the last message object logic or direct client API
@@ -168,25 +161,86 @@ Si hablas de PRUNEX o estreñimiento por PRIMERA VEZ, incluye SIEMPRE al final e
                 // Save AI response to history
                 history.push(`Asesor: ${aiResponse}`);
 
-                if (aiResponse.includes('[MEDIA:prunex]')) {
-                    const cleanResponse = aiResponse.replace('[MEDIA:prunex]', '').trim();
-                    if (cleanResponse) await chat.sendMessage(cleanResponse);
-                    
-                    // Solo enviar la imagen si no se ha enviado antes a este usuario
+                let finalResponse = aiResponse;
+                let mediaToSend = [];
+                let audiosToSend = [];
+
+                // 1. Detectar Imágenes
+                if (finalResponse.includes('[MEDIA:prunex]')) {
+                    finalResponse = finalResponse.replace(/\[MEDIA:prunex\]/gi, '').trim();
                     if (!userStates.get(msg.from)?.hasSentPrunexImage) {
-                        try {
-                            const media = MessageMedia.fromFilePath('./public/prunex.png');
-                            await chat.sendMessage(media);
-                            
-                            // Marcar como enviada
-                            if (!userStates.has(msg.from)) userStates.set(msg.from, {});
-                            userStates.get(msg.from).hasSentPrunexImage = true;
-                        } catch (mediaError) {
-                            console.error("Error sending media:", mediaError);
+                        mediaToSend.push(path.join(process.cwd(), 'public', 'prunex.png'));
+                        if (!userStates.has(msg.from)) userStates.set(msg.from, {});
+                        userStates.get(msg.from).hasSentPrunexImage = true;
+                    }
+                }
+
+                // 2. Detectar Audios
+                const audioRegex = /\[\s*AUDIO\s*:\s*(.*?)\s*\]/gi;
+                let match;
+                while ((match = audioRegex.exec(aiResponse)) !== null) {
+                    const audioName = match[1].toLowerCase().trim();
+                    let audioPath = null;
+
+                    // Estrategia de búsqueda:
+                    // A. Carpeta del dueño actual
+                    const ownerPath = path.join(process.cwd(), 'public', 'audios', ownerEmail, `${audioName}.ogg`);
+                    // B. Carpeta general
+                    const generalPath = path.join(process.cwd(), 'public', 'audios', `${audioName}.ogg`);
+
+                    if (fs.existsSync(ownerPath)) {
+                        audioPath = ownerPath;
+                    } else if (fs.existsSync(generalPath)) {
+                        audioPath = generalPath;
+                    } else {
+                        // C. Búsqueda Profunda (en cualquier subcarpeta)
+                        const baseAudiosDir = path.join(process.cwd(), 'public', 'audios');
+                        if (fs.existsSync(baseAudiosDir)) {
+                            const subdirs = fs.readdirSync(baseAudiosDir);
+                            for (const subdir of subdirs) {
+                                const subdirPath = path.join(baseAudiosDir, subdir, `${audioName}.ogg`);
+                                if (fs.existsSync(subdirPath) && !fs.lstatSync(subdirPath).isDirectory()) {
+                                    audioPath = subdirPath;
+                                    break;
+                                }
+                            }
                         }
                     }
-                } else {
-                    await chat.sendMessage(aiResponse);
+
+                    if (audioPath) {
+                        audiosToSend.push(audioPath);
+                        console.log(`✅ Audio encontrado y listo para enviar: ${audioPath}`);
+                    } else {
+                        console.error(`❌ ERROR: No se encontró el audio "${audioName}" en ninguna carpeta.`);
+                    }
+                }
+                
+                // Limpiar texto de tags
+                finalResponse = finalResponse.replace(/\[\s*AUDIO\s*:\s*(.*?)\s*\]/gi, '');
+                finalResponse = finalResponse.replace(/\[\s*MEDIA\s*:\s*(.*?)\s*\]/gi, '');
+                finalResponse = finalResponse.trim();
+
+                // 3. Enviar Texto
+                if (finalResponse) {
+                    await chat.sendMessage(finalResponse);
+                }
+
+                // 4. Enviar Multimedia
+                for (const mPath of mediaToSend) {
+                    if (fs.existsSync(mPath)) {
+                        const media = MessageMedia.fromFilePath(mPath);
+                        await chat.sendMessage(media);
+                    }
+                }
+
+                for (const aPath of audiosToSend) {
+                    try {
+                        const media = MessageMedia.fromFilePath(aPath);
+                        await chat.sendMessage(media, { sendAudioAsVoice: true });
+                        console.log(`🎙️ Audio enviado con éxito: ${aPath}`);
+                    } catch (err) {
+                        console.error(`❌ Error al enviar el archivo de audio: ${aPath}`, err);
+                    }
                 }
             } catch (error) {
                 console.error("Error processing queue for", msg.from, error);

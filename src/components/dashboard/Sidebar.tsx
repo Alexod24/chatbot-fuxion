@@ -10,7 +10,8 @@ import {
   BarChart, 
   MessageSquare, 
   LogOut,
-  Zap
+  Zap,
+  Users
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,8 @@ const menuItems = [
   { icon: Bot, label: "Bot Config", href: "/dashboard/bot" },
   { icon: MessageSquare, label: "Mensajes", href: "/dashboard/messages" },
   { icon: BarChart, label: "Estadísticas", href: "/dashboard/stats" },
+  { icon: Zap, label: "Multimedia", href: "/dashboard/media" },
+  { icon: Users, label: "Clientes (Admin)", href: "/dashboard/clients" },
   { icon: Settings, label: "Configuración", href: "/dashboard/settings" },
 ];
 
