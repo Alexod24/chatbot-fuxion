@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import supabase from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export async function GET() {
     try {
@@ -29,10 +29,34 @@ export async function GET() {
 
         if (err3) throw err3;
 
+        // 4. Calcular Gasto Total en Soles (PEN)
+        const { data: usageData, error: err4 } = await supabase
+            .from('usage_logs')
+            .select('tokens_input, tokens_output');
+
+        if (err4) throw err4;
+
+        let totalInput = 0;
+        let totalOutput = 0;
+        usageData?.forEach(row => {
+            totalInput += (row.tokens_input || 0);
+            totalOutput += (row.tokens_output || 0);
+        });
+
+        // Precios Gemini 1.5 Flash 8B (USD por token)
+        const priceInputUSD = 0.0375 / 1000000;
+        const priceOutputUSD = 0.15 / 1000000;
+        const exchangeRate = 3.75; // USD to PEN
+
+        const totalCostUSD = (totalInput * priceInputUSD) + (totalOutput * priceOutputUSD);
+        const totalCostPEN = totalCostUSD * exchangeRate;
+
         return NextResponse.json({
             totalRequests: totalRequests || 0,
             todayRequests: todayRequests || 0,
-            activeSessions: activeSessions || 0
+            activeSessions: activeSessions || 0,
+            totalTokens: totalInput + totalOutput,
+            totalCostPEN: totalCostPEN.toFixed(4) // 4 decimales para ver hasta el céntimo
         });
     } catch (error) {
         console.error('Admin Stats Error:', error);

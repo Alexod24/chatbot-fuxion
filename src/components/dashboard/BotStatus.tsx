@@ -13,6 +13,9 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
   const [status, setStatus] = useState<"disconnected" | "connecting" | "connected">("disconnected");
   const [qr, setQr] = useState<string | null>(null);
   const [showQR, setShowQR] = useState(false);
+  const [currentStep, setCurrentStep] = useState("Esperando...");
+  const [lastPromptUsed, setLastPromptUsed] = useState<string | null>(null);
+  const [lastResponseAt, setLastResponseAt] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -20,24 +23,32 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
         const response = await fetch(`/api/whatsapp/status?userId=${userId || 'default'}`);
         const data = await response.json();
         
+        if (data.step) setCurrentStep(data.step);
+        if (data.lastPromptUsed) setLastPromptUsed(data.lastPromptUsed);
+        if (data.lastResponseAt) setLastResponseAt(data.lastResponseAt);
+
         if (data.state === "CONNECTED" || data.state === "AUTHENTICATED") {
           setStatus("connected");
           setShowQR(false);
           setQr(null);
-        } else if (data.state === "QR_READY") {
+        } else if (data.qr) {
+          // Si hay un QR, lo mostramos sí o sea
           setStatus("connecting");
           setQr(data.qr);
           setShowQR(true);
+        } else if (data.state === "INITIALIZING" || data.state === "QR_READY") {
+          setStatus("connecting");
+          setShowQR(false); // Aún no hay QR pero está cargando
         } else {
           setStatus("disconnected");
           setQr(null);
-          // Don't hide QR if we are waiting for it, but if it's disconnected, hide it
-          if (!data.qr) setShowQR(false);
+          setShowQR(false);
         }
       } catch (error) {
         console.error("Error fetching WhatsApp status:", error);
       }
     };
+
 
     const interval = setInterval(fetchStatus, 3000);
     fetchStatus(); // Initial fetch
@@ -72,12 +83,12 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
               "bg-red-500 shadow-[0_0_12px_rgba(239,68,68,0.5)]"
             )} />
             <span className="text-sm font-semibold tracking-wider uppercase text-muted-foreground">
-              Estado del Agente: {status === "connected" ? "Activo" : status === "connecting" ? "Vinculando..." : "Inactivo"}
+              Estado: {status === "connected" ? "Activo" : currentStep}
             </span>
           </div>
           
           <h2 className="text-3xl font-bold text-white">
-            {status === "connected" ? "¡Tu agente está vendiendo!" : "Vincula tu WhatsApp"}
+            {status === "connected" ? "¡Tu agente está vendiendo!" : currentStep === "Scan now" ? "Escanea el Código" : "Vincula tu WhatsApp"}
           </h2>
           
           <p className="text-muted-foreground max-w-md leading-relaxed">
@@ -86,7 +97,7 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
               : "Escanea el código QR con tu aplicación de WhatsApp para activar tu agente inteligente y empezar a automatizar tus ventas."}
           </p>
 
-          <div className="flex gap-4 pt-2">
+          <div className="flex flex-wrap gap-4 pt-2">
             <button 
               onClick={toggleConnect}
               disabled={status === "connecting"}
@@ -97,17 +108,36 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
                   : "bg-indigo-600 text-white hover:bg-indigo-700 glow-indigo disabled:opacity-50"
               )}
             >
-              {status === "connected" ? "Agente Conectado" : status === "connecting" ? "Generando QR..." : "Vincular WhatsApp"}
+              {status === "connected" ? "Agente Conectado" : status === "connecting" ? "Procesando..." : "Vincular WhatsApp"}
               {status === "connecting" && <RefreshCw className="w-4 h-4 animate-spin" />}
             </button>
             
             {status === "connected" && (
-              <button className="px-6 py-3 rounded-xl font-bold bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-all flex items-center gap-2 border border-emerald-500/20">
+              <div className="flex items-center gap-3 px-4 py-3 bg-emerald-500/10 text-emerald-500 rounded-xl border border-emerald-500/20 text-xs font-bold">
                 <CheckCircle2 className="w-4 h-4" />
-                Ver Logs en Vivo
-              </button>
+                <span>IA SINCRONIZADA</span>
+                <span className="opacity-40 font-normal">
+                  {lastResponseAt ? `Última resp: ${new Date(lastResponseAt).toLocaleTimeString()}` : 'Listo'}
+                </span>
+              </div>
             )}
           </div>
+
+          {status === "connected" && lastPromptUsed && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-4 bg-indigo-500/5 rounded-2xl border border-indigo-500/10"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Instrucción Actual en la IA</span>
+                <span className="text-[10px] text-white/20">Tiempo Real</span>
+              </div>
+              <p className="text-xs text-muted-foreground line-clamp-2 italic">
+                "{lastPromptUsed}"
+              </p>
+            </motion.div>
+          )}
         </div>
 
         <div className="relative">
@@ -140,10 +170,11 @@ export function BotStatus({ userId = 'default' }: BotStatusProps) {
               >
                 <Smartphone className="w-16 h-16 opacity-20" />
                 <span className="text-xs font-medium uppercase tracking-widest opacity-40">
-                  {status === "connected" ? "Conectado" : "Esperando Conexión"}
+                  {status === "connected" ? "Conectado" : currentStep}
                 </span>
               </motion.div>
             )}
+
           </AnimatePresence>
           
           {/* Decorative floating elements */}

@@ -26,6 +26,7 @@ export default function DashboardPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [prospects, setProspects] = useState<any[]>([]);
+  const [totalCostPEN, setTotalCostPEN] = useState("0.0000");
   const [isLoading, setIsLoading] = useState(true);
 
 
@@ -71,20 +72,25 @@ export default function DashboardPage() {
           .then(res => res.json())
           .then(data => {
             if (Array.isArray(data)) setProspects(data);
-            setIsLoading(false);
           });
+
+        // Cargar Estadísticas de Gasto (ADMIN/STATS)
+        fetch('/api/admin/stats')
+            .then(res => res.json())
+            .then(data => {
+                if (data.totalCostPEN) setTotalCostPEN(data.totalCostPEN);
+                setIsLoading(false);
+            });
     };
 
     fetchData();
 
-    // Polling para actualizar cada 10s
+    // Polling para actualizar cada 30s
     const interval = setInterval(() => {
         const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
         let uId = 'default';
         if (userStr) {
-            try {
-                uId = JSON.parse(userStr).id || 'default';
-            } catch(e) {}
+            try { uId = JSON.parse(userStr).id || 'default'; } catch(e) {}
         }
         
         fetch(`/api/prospects?userId=${uId}`)
@@ -92,7 +98,13 @@ export default function DashboardPage() {
             .then(data => {
                 if (Array.isArray(data)) setProspects(data);
             });
-    }, 10000);
+
+        fetch('/api/admin/stats')
+            .then(res => res.json())
+            .then(data => {
+                if (data.totalCostPEN) setTotalCostPEN(data.totalCostPEN);
+            });
+    }, 30000);
 
 
     return () => clearInterval(interval);
@@ -189,7 +201,7 @@ export default function DashboardPage() {
             <StatCard label="Conversaciones" value={prospects.length} icon={MessageSquare} trend={{ value: 12, isUp: true }} />
             <StatCard label="Prospectos" value={prospects.length} icon={Users} trend={{ value: 8, isUp: true }} />
             <StatCard label="Tasa Cierre" value="24%" icon={TrendingUp} trend={{ value: 4, isUp: true }} />
-            <StatCard label="Velocidad" value="1.5s" icon={Clock} trend={{ value: 2, isUp: false }} />
+            <StatCard label="Gasto Gemini" value={`S/ ${totalCostPEN}`} icon={Zap} trend={{ value: 0, isUp: false }} />
           </div>
 
           {/* Bot Status Section */}

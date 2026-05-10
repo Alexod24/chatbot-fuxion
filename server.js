@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
@@ -25,8 +26,9 @@ app.prepare().then(() => {
     })
     .listen(port, () => {
       console.log(`> Ready on http://${hostname}:${port}`);
-      // Initialize WhatsApp instances
+      // Auto-inicialización del bot al arrancar el servidor
       const { initializeWhatsApp } = require('./src/lib/whatsapp');
-      initializeWhatsApp();
+      initializeWhatsApp().catch(err => console.error("Error en auto-init:", err));
     });
+
 });

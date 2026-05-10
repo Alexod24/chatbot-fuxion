@@ -1,13 +1,18 @@
 const { GoogleGenAI } = require('@google/genai');
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+require('dotenv').config();
 
-async function list() {
-  try {
-    const response = await ai.models.list();
-    console.log(JSON.stringify(response, null, 2));
-  } catch (e) {
-    console.error(e);
-  }
+async function listModels() {
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    try {
+        const models = await ai.models.list();
+        console.log("--- MODELOS DISPONIBLES EN TU CUENTA ---");
+        models.forEach(m => {
+            console.log(`- ${m.name}`);
+        });
+        console.log("---------------------------------------");
+    } catch (error) {
+        console.error("Error listando modelos:", error);
+    }
 }
 
-list();
+listModels();

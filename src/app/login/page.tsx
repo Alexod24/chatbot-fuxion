@@ -20,8 +20,8 @@ export default function LoginPage() {
 
     // Validación de credenciales solicitadas
     const validUsers = [
-      { email: "admin@gmail.com", password: "123455", role: "admin", name: "Alex OD" },
-      { email: "kenedy@gmail.com", password: "123456", role: "cliente", name: "Kenedy" }
+      { id: "d6ad5552-f84f-4f5f-aa97-86fca5a5402a", email: "admin@gmail.com", password: "123455", role: "admin", name: "Alex OD" },
+      { id: "d6ad5552-f84f-4f5f-aa97-86fca5a5402a", email: "kenedy@gmail.com", password: "123456", role: "cliente", name: "Kenedy" }
     ];
 
     const user = validUsers.find(u => u.email === email && u.password === password);
