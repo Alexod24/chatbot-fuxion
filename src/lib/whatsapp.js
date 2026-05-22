@@ -3,10 +3,12 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { generateChatbotResponse } = require('./gemini');
 
-// Regex global para detectar audios dinámicos en el texto
-const dynamicAudioRegex = /\[\s*ENVIAR_AUDIO\s*:\s*([^\]]+)\s*\]/i;
+// Regex global para detectar audios dinámicos en el texto (Soporta [ENVIAR_AUDIO:...] y [AUDIO:...])
+const dynamicAudioRegex = /\[\s*(?:ENVIAR_AUDIO|AUDIO)\s*:\s*([^\]]+)\s*\]/i;
+const agendarRegex = /\[\s*AGENDAR\s*:\s*([^,\]]+)\s*,\s*([^\]]+)\s*\]/i;
 
 class WhatsAppManager {
     constructor() {
@@ -14,6 +16,9 @@ class WhatsAppManager {
         this.statuses = new Map(); // Map<userId, { state: string, qr: string }>
         this.histories = new Map(); // Memoria por chat
         this.processedMessages = new Set(); // Para evitar procesar el mismo mensaje varias veces (duplicados de red)
+        this.messageBuffers = new Map(); // Map<chatId, string> - Acumulador de mensajes
+        this.messageTimers = new Map(); // Map<chatId, Timeout> - Temporizadores de espera
+        this.activePromises = new Map(); // Map<chatId, Promise> - Colas de procesamiento para serialización
         
         // Limpiar mensajes procesados cada 30 minutos
         setInterval(() => this.processedMessages.clear(), 30 * 60 * 1000);
@@ -56,8 +61,12 @@ class WhatsAppManager {
         const client = new Client({
             authStrategy: new LocalAuth({ 
                 clientId: `client-${userId}`, // ID fijo para persistencia 24/7
-                dataPath: path.join(process.cwd(), '.wwebjs_auth')
+                dataPath: path.join(os.homedir(), '.wwebjs_auth')
             }),
+            webVersionCache: {
+                type: 'local',
+                path: path.join(os.homedir(), '.wwebjs_cache')
+            },
             authTimeoutMs: 60000,
             puppeteer: {
                 args: [
@@ -97,6 +106,9 @@ class WhatsAppManager {
             status.state = 'CONNECTED';
             status.qr = null;
             status.step = 'Active';
+            if (!client.readyTime) {
+                client.readyTime = Math.floor(Date.now() / 1000);
+            }
         });
 
         client.on('authenticated', () => {
@@ -121,240 +133,319 @@ class WhatsAppManager {
 
         client.on('message_create', async (msg) => {
             try {
-                // ESCUDO TOTAL: Si no hay mensaje o no hay ID, fuera.
                 if (!msg || !msg.id || !msg.id._serialized) return;
-
-                // Asegurar que la memoria exista (evita fallos en hot-reload)
-                if (!this.histories) this.histories = new Map();
-                if (!this.processedMessages) this.processedMessages = new Set();
                 
+                // Ignorar mensajes recibidos antes de que el cliente esté listo o mensajes de más de 60 segundos de antigüedad
+                const now = Math.floor(Date.now() / 1000);
+                if (!client.readyTime || msg.timestamp < client.readyTime || (now - msg.timestamp) > 60) {
+                    return;
+                }
+
                 const msgId = msg.id._serialized;
                 if (this.processedMessages.has(msgId)) return;
                 this.processedMessages.add(msgId);
 
-                // Clasificación básica
                 const isAudio = msg.type === 'audio' || msg.type === 'ptt';
                 const isStatus = msg.isStatus || msg.from === 'status@broadcast';
                 const isGroup = msg.from && msg.from.includes('@g.us');
 
-                // MODO RADAR: Si es audio, lo logueamos SIEMPRE (incluso si es nuestro)
                 if (isAudio) {
-                    console.log("-----------------------------------------");
                     console.log(`[AUDIO DETECTADO] ID: ${msgId}`);
-                    console.log("-----------------------------------------");
                 }
 
-                // Filtros de salida
-                const isCommand = msg.body.startsWith('#GUARDAR:');
-                if (msg.fromMe && !isAudio && !isCommand) return;
+                if (msg.fromMe && !(msg.body && msg.body.startsWith('#GUARDAR:'))) return;
                 if (isStatus || isGroup) return;
 
                 // --- MECÁNICA DE GUARDADO DE AUDIOS (#GUARDAR:NOMBRE) ---
                 if (msg.hasQuotedMsg && msg.body.startsWith('#GUARDAR:')) {
-                    try {
-                        const audioName = msg.body.split(':')[1]?.trim().toUpperCase();
-                        const quotedMsg = await msg.getQuotedMessage();
-                        
-                        if (audioName && (quotedMsg.type === 'audio' || quotedMsg.type === 'ptt')) {
-                            console.log("-----------------------------------------");
-                            console.log(`[SISTEMA] Guardando audio '${audioName}'...`);
-                            console.log("-----------------------------------------");
-                            
-                            const { supabase } = require('./supabase');
-                            const targetUserId = (userId === 'default') ? 'd6ad5552-f84f-4f5f-aa97-86fca5a5402a' : userId;
-                            
-                            const { error } = await supabase
-                                .from('bot_audios')
-                                .upsert({
-                                    user_id: targetUserId,
-                                    name: audioName,
-                                    message_id: quotedMsg.id._serialized
-                                }, { onConflict: 'user_id, name' });
-
-                            if (!error) {
-                                await msg.reply(`✅ *¡CONFIRMADO!* Audio guardado como: *${audioName}*\n\nYa puedes usarlo en tus prompts con: [ENVIAR_AUDIO:${audioName}]`);
-                                console.log(`[SISTEMA] ✅ Audio '${audioName}' guardado con éxito.`);
-                            } else {
-                                console.error("[Supabase Error]", error);
-                                await msg.reply("❌ Error al guardar en la base de datos.");
-                            }
-                            return; // IMPORTANTE: Detener aquí para que la IA no intente responder al comando
-                        }
-                    } catch (saveErr) {
-                        console.error("[Save Audio Error]", saveErr);
+                    // (Lógica de guardado se mantiene igual, pero procesada de inmediato)
+                    const audioName = msg.body.split(':')[1]?.trim().toUpperCase();
+                    const quotedMsg = await msg.getQuotedMessage();
+                    if (audioName && (quotedMsg.type === 'audio' || quotedMsg.type === 'ptt')) {
+                        const { supabase } = require('./supabase');
+                        const targetUserId = (userId === 'default') ? 'd6ad5552-f84f-4f5f-aa97-86fca5a5402a' : userId;
+                        await supabase.from('bot_audios').upsert({ user_id: targetUserId, name: audioName, message_id: quotedMsg.id._serialized }, { onConflict: 'user_id, name' });
+                        await msg.reply(`✅ *Audio guardado:* ${audioName}`);
+                        return;
                     }
                 }
 
                 // --- Privacy & Filtering ---
                 const contact = await msg.getContact().catch(() => ({ number: 'unknown', isMyContact: false }));
-                
-                // Solo responder si NO es un grupo y el contacto NO está en la agenda
-                // PERO permitimos que el audio logger pase si es de nosotros mismos
-                if (!msg.fromMe && (isGroup || contact.isMyContact)) {
-                    return;
+                if (!msg.fromMe && contact.isMyContact) return;
+
+                // --- AGREGACIÓN DE MENSAJES (Espera 6 segundos para agrupar mensajes separados) ---
+                const chatId = msg.from;
+                const currentContent = this.messageBuffers.get(chatId) || "";
+                const newContent = currentContent ? (currentContent + " " + msg.body) : msg.body;
+                this.messageBuffers.set(chatId, newContent);
+
+                // Si ya hay un timer corriendo, lo reseteamos
+                if (this.messageTimers.has(chatId)) {
+                    clearTimeout(this.messageTimers.get(chatId));
                 }
 
-                // Si llegamos aquí y es de nosotros mismos, SOLO permitimos si es audio (para loguear)
-                if (msg.fromMe && !isAudio) return;
-                if (msg.fromMe && isAudio) return; // Ya lo logueamos arriba, no queremos que la IA responda a nuestro propio audio.
+                const timer = setTimeout(async () => {
+                    const fullMessage = this.messageBuffers.get(chatId);
+                    this.messageBuffers.delete(chatId);
+                    this.messageTimers.delete(chatId);
 
-            // --- AI Logic with Dynamic Config ---
-
-            // (Eliminado try redundante)
-                let systemPrompt = "Eres Alex, asesor experto de Fuxion AI.";
-                const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId);
-                const targetId = isUUID ? userId : 'd6ad5552-f84f-4f5f-aa97-86fca5a5402a';
-                const { supabase } = require('./supabase');
-
-                const { data: config } = await supabase
-                    .from('bot_configs')
-                    .select('expert_prompt')
-                    .eq('user_id', targetId)
-                    .single();
-                
-                if (config && config.expert_prompt) {
-                    systemPrompt = config.expert_prompt;
-                }
-
-
-
-
-                
-                // --- SIMULACIÓN HUMANA (Paso 1: Lectura y Inicio de Escritura) ---
-                const chat = await msg.getChat();
-                await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
-                await chat.sendStateTyping();
-
-                // --- GESTIÓN DE HISTORIAL (Memoria) ---
-                if (!this.histories.has(msg.from)) {
-                    this.histories.set(msg.from, []);
-                }
-                const history = this.histories.get(msg.from);
-
-                // 2. --- AHORRO DE TOKENS: CONOCIMIENTO DINÁMICO (Basado en historial) ---
-                const historyText = history.map(h => h.content).join(" ");
-                const fullContextText = (msg.body + " " + historyText).toUpperCase();
-                
-                const keywords = ['DIGESTION', 'PESO', 'ENERGIA', 'PRUNEX', 'THERMO', 'VITA', 'FLORA', 'NOCARB', 'ON'];
-                const foundKeywords = keywords.filter(k => fullContextText.includes(k));
-                
-                let dynamicContext = "";
-                if (foundKeywords.length > 0) {
-                    const { data: knowledge } = await supabase
-                        .from('bot_knowledge')
-                        .select('content')
-                        .eq('user_id', targetId)
-                        .in('keyword', foundKeywords);
-                    
-                    if (knowledge && knowledge.length > 0) {
-                        dynamicContext = "\n\nINFORMACIÓN DE APOYO ACTUALIZADA (Usa estos precios en S/):\n" + 
-                                         knowledge.map(k => k.content).join("\n");
-                    }
-                }
-
-                const now = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
-                let finalPrompt = systemPrompt + dynamicContext + `\n\nHORA ACTUAL EN PERÚ: ${now}`;
-
-                // Si hay historial, añadir una nota mental a la IA
-                if (history.length > 0) {
-                    finalPrompt += "\n\nNOTA: Si el cliente eligió tema pero aún NO ha aceptado saber la inversión, habla SOLO de beneficios. PROHIBIDO dar precios en la explicación inicial. Solo da el precio si el cliente lo pide o acepta saber la inversión. NO menciones que envías un audio.";
-                }
-
-                history.push({ role: "user", content: msg.body });
-                
-                if (history.length > 6) history.shift();
-
-                // Generar respuesta con la IA (MODO TEST: GROQ)
-                const { generateGroqResponse } = require('./groq');
-                let aiResponse = await generateGroqResponse(history, finalPrompt, userId);
-
-                // Guardar respuesta en historial
-                history.push({ role: "assistant", content: aiResponse });
-                if (history.length > 6) history.shift();
-
-                // --- DEBUG LOUD ---
-                console.log("-----------------------------------------");
-                console.log(`[DEBUG] IA RESPONDIÓ: "${aiResponse}"`);
-                console.log("-----------------------------------------");
-
-                // --- SIMULACIÓN HUMANA (Paso 2: Tiempo de Escritura proporcional) ---
-                const typingTime = Math.min(Math.max(aiResponse.length * 45, 2500), 7000); 
-                await new Promise(resolve => setTimeout(resolve, typingTime));
-
-                // --- NOTIFICACIÓN DE LLAMADA PACTADA ---
-                if (aiResponse.includes('[LLAMADA_PACTADA:')) {
-                    const horaMatch = aiResponse.match(/\[LLAMADA_PACTADA:(.*?)\]/i);
-                    const horaCita = horaMatch ? horaMatch[1] : "No definida";
-                    
-                    // Limpiar la etiqueta para el cliente
-                    aiResponse = aiResponse.replace(/\[LLAMADA_PACTADA:.*?\]/gi, "").trim();
-
-                    // Enviar notificación al dueño del bot (a sí mismo)
-                    const ownerNumber = client.info.wid._serialized;
-                    const clientNumber = msg.from.split('@')[0];
-                    const notification = `📌 *NUEVA CITA PACTADA*\n\nHola, hemos agendado una llamada con el número: *${clientNumber}*\n⏰ Hora: *${horaCita}*\n\n¡Buena suerte estratega! 🚀`;
-                    
-                    await client.sendMessage(ownerNumber, notification);
-                    console.log(`[SISTEMA] ✅ Cita notificada al dueño para las ${horaCita}`);
-                }
-
-                // --- Soporte para Audios Dinámicos [ENVIAR_AUDIO:NOMBRE] ---
-                const dynamicMatch = aiResponse.match(dynamicAudioRegex);
-
-                // --- LIMPIEZA DEL TEXTO (Ocultar códigos al cliente) ---
-                let textToSend = aiResponse.replace(dynamicAudioRegex, '').trim();
-
-                if (textToSend) {
-                    await chat.sendMessage(textToSend);
-                }
-
-                if (dynamicMatch) {
-                    try {
-                        const searchName = dynamicMatch[1].trim().toUpperCase();
-                        
-                        // --- SIMULACIÓN HUMANA (Paso 3: Grabación) ---
-                        await new Promise(resolve => setTimeout(resolve, 1200));
-                        await chat.sendStateRecording();
-                        await new Promise(resolve => setTimeout(resolve, 4000 + Math.random() * 2000));
-
-                        const { supabase } = require('./supabase');
-                        const targetUserId = (userId === 'default') ? 'd6ad5552-f84f-4f5f-aa97-86fca5a5402a' : userId;
-                        
-                        const { data: audioRecord } = await supabase
-                            .from('bot_audios')
-                            .select('message_id')
-                            .eq('user_id', targetUserId)
-                            .eq('name', searchName)
-                            .single();
-                        
-                        if (audioRecord) {
-                            const messageToForward = await msg.client.getMessageById(audioRecord.message_id);
-                            await messageToForward.forward(msg.from);
-                            console.log(`[WhatsApp][${userId}] ✅ AUDIO ENVIADO: ${searchName}`);
+                    // Serializar el procesamiento de mensajes para el mismo chat usando una cola de promesas
+                    const currentPromise = this.activePromises.get(chatId) || Promise.resolve();
+                    const nextPromise = currentPromise.then(async () => {
+                        try {
+                            await this.processMessageInternal(userId, client, msg, fullMessage);
+                        } catch (err) {
+                            console.error(`[WhatsApp] Error in sequential process for ${chatId}:`, err);
                         }
-                    } catch (audioErr) {
-                        console.error(`[WhatsApp] Error audio dinámico:`, audioErr.message);
-                    }
-                }
-                await chat.clearState(); // Detener estados
+                    });
 
+                    this.activePromises.set(chatId, nextPromise);
 
+                    // Limpiar la referencia de la promesa una vez finalizado todo el flujo para no consumir memoria
+                    nextPromise.finally(() => {
+                        if (this.activePromises.get(chatId) === nextPromise) {
+                            this.activePromises.delete(chatId);
+                        }
+                    });
+                }, 6000); // 6 segundos de espera prudente
+
+                this.messageTimers.set(chatId, timer);
 
             } catch (err) {
-                console.error(`[WhatsApp] Error processing message for ${userId}:`, err);
+                console.error(`[WhatsApp] Error in message_create for ${userId}:`, err);
             }
         });
 
         // Captura errores internos de Puppeteer
         client.initialize().then(() => {
-            console.log(`[WhatsApp][${userId}] >> Initialization process started... (Groq Llama 3 enabled)`);
+            console.log(`[WhatsApp][${userId}] >> Initialization process started...`);
             status.step = 'Loading WhatsApp Web';
         }).catch(err => {
             console.error(`[WhatsApp][${userId}] !! CRITICAL ERROR during init:`, err.message);
             status.state = 'ERROR';
-            status.error = err.message;
-            status.step = 'Fatal Error';
         });
+    }
+
+    /**
+     * Procesa el mensaje final (solo o agrupado) con la IA
+     */
+    async processMessageInternal(userId, client, originalMsg, messageBody) {
+        try {
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-5][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId);
+            const targetId = isUUID ? userId : 'd6ad5552-f84f-4f5f-aa97-86fca5a5402a';
+            const { supabase } = require('./supabase');
+
+            const { data: config } = await supabase.from('bot_configs').select('expert_prompt').eq('user_id', targetId).single();
+            const systemPrompt = config?.expert_prompt || "Eres Alex, asesor de Fuxion.";
+
+            const chat = await originalMsg.getChat();
+            await chat.sendStateTyping();
+
+            if (!this.histories.has(originalMsg.from)) this.histories.set(originalMsg.from, []);
+            const history = this.histories.get(originalMsg.from);
+
+            // Ahorro de tokens / Contexto dinámico
+            const historyText = history.map(h => h.content).join(" ");
+            const fullContextText = (messageBody + " " + historyText).toUpperCase();
+            const keywords = ['DIGESTION', 'PESO', 'ENERGIA', 'PRUNEX', 'THERMO', 'VITA', 'FLORA', 'NOCARB', 'ON'];
+            const foundKeywords = keywords.filter(k => fullContextText.includes(k));
+            
+            let dynamicContext = "";
+            if (foundKeywords.length > 0) {
+                const { data: knowledge } = await supabase.from('bot_knowledge').select('content').eq('user_id', targetId).in('keyword', foundKeywords);
+                if (knowledge) dynamicContext = "\n\nAPOYO:\n" + knowledge.map(k => k.content).join("\n");
+            }
+
+            const systemConstraint = `
+[RESTRICCIÓN CRÍTICA DE RESPUESTA]
+1. Respuestas basadas únicamente en Fuxion: Tus respuestas deben centrarse ÚNICAMENTE en los productos de Fuxion, estreñimiento, hígado graso, peso, energía, limpieza de colon o temas de salud y bienestar del catálogo de Fuxion provistos en las instrucciones y en la base de datos (APOYO).
+2. Prohibida la conversación casual: Tienes ESTRICTAMENTE PROHIBIDO responder con frases de relleno, preguntas generales de chat, cháchara sobre la vida personal del usuario (por ejemplo, preguntar cómo fue su día, cómo está el clima, de dónde es, chistes, anécdotas, etc.).
+3. Saludo e inicio enfocado: Si el usuario te saluda ("Hola", "Buenas", etc.), debes iniciar tu respuesta saludando con un "Hola" inicial y presentarte como Alex (ejemplo: "Hola, soy Alex..."), e inmediatamente haz una pregunta sobre su salud o digestión para iniciar el Diagnóstico (Paso 1). Ejemplo: "Hola, soy Alex. Cuéntame, buscas mejorar tu digestión o qué objetivo de salud tienes hoy?".
+4. Comportamiento ante temas fuera de alcance: Si el usuario te pregunta por cualquier tema que no sea de Fuxion o de los productos/temas provistos (por ejemplo, temas personales, de actualidad, chistes, etc.), responde en una única oración corta que solo estás capacitado para asesorarle en productos Fuxion y redirige la conversación.
+5. Sigue al pie de la letra las REGLAS del flujo.
+6. SÉ EXTREMADAMENTE BREVE Y CONCISO: Tus respuestas deben tener un máximo de 1 a 2 oraciones muy cortas (menos de 30 palabras en total). Simula mensajes de WhatsApp reales, que son rápidos, directos y van al grano. Evita explicaciones largas, detalles innecesarios o textos extensos.
+7. REGLAS DE HUMANIZACIÓN: Respeta estrictamente las prohibiciones de tu instrucción (Cero listas, cero viñetas, PROHIBIDO usar saludos genéricos como "Cómo estás hoy?" o "Necesitas algo?", y PROHIBIDO usar la palabra "gustaría" o variaciones de ella. En su lugar, usa preguntas directas como "Buscas...?", "Deseas...?", o "Quieres...?"). Queda ESTRICTAMENTE PROHIBIDO utilizar los signos de interrogación y exclamación de apertura (¿ y ¡).
+`;
+
+            const now = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
+            const finalPrompt = systemPrompt + "\n" + systemConstraint + dynamicContext + `\n\nHORA ACTUAL EN PERÚ: ${now}`;
+
+            history.push({ role: "user", content: messageBody });
+            if (history.length > 6) history.shift();
+
+            const { generateGroqResponse } = require('./groq');
+            let aiResponse = await generateGroqResponse(history, finalPrompt, userId);
+
+            // Eliminar programáticamente los signos de apertura ¿ y ¡ para asegurar el formato informal
+            if (aiResponse) {
+                aiResponse = aiResponse.replace(/[¿¡]/g, '');
+
+                // Filtro fail-safe de contradicción de precios:
+                // Si la respuesta contiene precios y una pregunta sobre si desea saber el precio, la eliminamos.
+                const contienePrecio = /s\/\s*\d+|cuesta|cuestan/i.test(aiResponse);
+                if (contienePrecio) {
+                    // Extraemos temporalmente el tag de audio si existe al final
+                    let audioTag = "";
+                    const audioTagMatch = aiResponse.match(/(\[\s*(?:ENVIAR_AUDIO|AUDIO)\s*:\s*[^\]]+\s*\])\s*$/i);
+                    if (audioTagMatch) {
+                        audioTag = " " + audioTagMatch[1];
+                        aiResponse = aiResponse.slice(0, -audioTagMatch[0].length).trim();
+                    }
+
+                    const redundantPriceRegex = /(?:deseas|quieres|te\s+gustaría|gustaría)\s+(?:saber|conocer)\s+(?:cuál\s+es\s+)?(?:el\s+|los\s+)?precio[s]?[^.]*\??$/gi;
+                    aiResponse = aiResponse.replace(redundantPriceRegex, '').trim();
+
+                    // Re-adicionamos el tag de audio si existía
+                    if (audioTag) {
+                        aiResponse = aiResponse + audioTag;
+                    }
+                }
+            }
+
+            // Detectar y procesar tag de agendamiento
+            const agendarMatch = aiResponse ? aiResponse.match(agendarRegex) : null;
+            if (agendarMatch) {
+                aiResponse = aiResponse.replace(agendarRegex, '').trim();
+            }
+
+            history.push({ role: "assistant", content: aiResponse });
+            if (history.length > 6) history.shift();
+
+            console.log(`[DEBUG] IA RESPONDIÓ: "${aiResponse}"`);
+
+            const typingTime = Math.min(Math.max(aiResponse.length * 45, 2000), 5000); 
+            await new Promise(resolve => setTimeout(resolve, typingTime));
+
+            const dynamicMatch = aiResponse.match(dynamicAudioRegex);
+            let textToSend = aiResponse.replace(dynamicAudioRegex, '').trim();
+
+            if (textToSend) await chat.sendMessage(textToSend);
+
+            // Si hay un agendamiento exitoso, notificar al socio en su propio chat
+            if (agendarMatch) {
+                const selfJid = client.info && client.info.wid ? client.info.wid._serialized : null;
+                if (selfJid) {
+                    const horaPactada = agendarMatch[1].trim();
+                    const productoInteres = agendarMatch[2].trim();
+                    
+                    // Ejecutar de forma asíncrona para no bloquear el flujo principal de respuesta al cliente
+                    (async () => {
+                        let clientJid = originalMsg.from;
+                        try {
+                            if (clientJid.endsWith('@lid')) {
+                                console.log(`[Notification] JID is LID: ${clientJid}. Attempting to resolve to phone number...`);
+                                // Intentar múltiples métodos dentro del contexto de Puppeteer para resolver el JID de teléfono real (@c.us)
+                                const resolvedPhoneJid = await client.pupPage.evaluate(async (lidStr) => {
+                                    try {
+                                        const wid = window.Store.WidFactory.createWid(lidStr);
+                                        
+                                        // 1. Buscar en el almacén de contactos existente
+                                        let contact = window.Store.Contact.get(wid);
+                                        if (!contact) {
+                                            contact = await window.Store.Contact.find(wid);
+                                        }
+                                        if (contact) {
+                                            if (contact.phoneNumber && contact.phoneNumber._serialized) {
+                                                return contact.phoneNumber._serialized;
+                                            }
+                                            if (contact.pn && contact.pn._serialized) {
+                                                return contact.pn._serialized;
+                                            }
+                                        }
+                                        
+                                        // 2. Intentar usando LidUtils
+                                        if (window.Store.LidUtils) {
+                                            const phoneWid = window.Store.LidUtils.getPhoneNumber(wid);
+                                            if (phoneWid && phoneWid._serialized) {
+                                                return phoneWid._serialized;
+                                            }
+                                        }
+                                        
+                                        // 3. Forzar recuperación
+                                        if (window.WWebJS && window.WWebJS.enforceLidAndPnRetrieval) {
+                                            const res = await window.WWebJS.enforceLidAndPnRetrieval(lidStr);
+                                            if (res && res.phone && res.phone._serialized) {
+                                                return res.phone._serialized;
+                                            }
+                                        }
+                                        
+                                        // 4. Buscar en el almacén de chats
+                                        const chat = window.Store.Chat.get(wid);
+                                        if (chat && chat.contact) {
+                                            if (chat.contact.phoneNumber && chat.contact.phoneNumber._serialized) {
+                                                return chat.contact.phoneNumber._serialized;
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.error("Error resolving LID to phone inside Puppeteer:", e);
+                                    }
+                                    return null;
+                                }, clientJid);
+
+                                if (resolvedPhoneJid) {
+                                    clientJid = resolvedPhoneJid;
+                                    console.log(`[Notification] Resolved LID ${originalMsg.from} to phone JID ${clientJid}`);
+                                } else {
+                                    // Probar con getContactLidAndPhone si todo lo demás falla
+                                    const lidPhoneList = await client.getContactLidAndPhone([clientJid]);
+                                    if (lidPhoneList && lidPhoneList.length > 0 && lidPhoneList[0].pn) {
+                                        clientJid = lidPhoneList[0].pn;
+                                        console.log(`[Notification] Resolved LID ${originalMsg.from} using backup method to phone JID ${clientJid}`);
+                                    } else {
+                                        console.warn(`[Notification] Could not resolve LID ${clientJid} to phone JID`);
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.error("[Notification] Error resolving JID from LID:", err);
+                        }
+
+                        let clientNumber = clientJid.split('@')[0];
+                        let waLink = `https://wa.me/${clientNumber}`;
+                        try {
+                            const contact = await client.getContactById(clientJid);
+                            if (contact) {
+                                const formatted = await contact.getFormattedNumber();
+                                if (formatted) {
+                                    clientNumber = formatted;
+                                    const cleanDigits = formatted.replace(/\D/g, '');
+                                    if (cleanDigits) {
+                                        waLink = `https://wa.me/${cleanDigits}`;
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.error("[Notification] Error getting formatted contact number:", err);
+                        }
+
+                        const notificationText = `🔔 *LLAMADA AGENDADA*\n\n📞 *Cliente:* ${clientNumber.startsWith('+') ? clientNumber : '+' + clientNumber}\n🔗 *Chat:* ${waLink}\n📦 *Producto:* ${productoInteres}\n⏰ *Hora pactada:* ${horaPactada}\n\nListo, llama al cliente a la hora acordada para cerrar la venta.`;
+                        
+                        await client.sendMessage(selfJid, notificationText);
+                        console.log(`[Notification] Sent call notification to self (${selfJid}) for client ${clientNumber}`);
+                    })().catch(err => console.error("[Notification] Error processing/sending notification:", err));
+                } else {
+                    console.warn("[Notification] Could not get selfJid from client.info to send notification");
+                }
+            }
+
+            if (dynamicMatch) {
+                const searchName = dynamicMatch[1].trim().toUpperCase();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await chat.sendStateRecording();
+                await new Promise(resolve => setTimeout(resolve, 3000));
+
+                const { data: audioRecord } = await supabase.from('bot_audios').select('message_id').eq('user_id', targetId).eq('name', searchName).single();
+                if (audioRecord) {
+                    const messageToForward = await client.getMessageById(audioRecord.message_id);
+                    await messageToForward.forward(originalMsg.from);
+                }
+            }
+            await chat.clearState();
+
+        } catch (err) {
+            console.error("[WhatsApp] processMessageInternal Error:", err);
+        }
     }
 
 
