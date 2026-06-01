@@ -20,7 +20,45 @@ export async function POST(req) {
         const body = await req.json();
         
         if (body.id && body.updates) {
-            // Update existing profile
+            // Check for renew action (1 month) or trial action (7 days)
+            if (body.updates.action === 'renew' || body.updates.action === 'trial') {
+                // Fetch current user to determine plan_end_date
+                const { data: user, error: fetchError } = await supabase
+                    .from('profiles')
+                    .select('plan_end_date')
+                    .eq('id', body.id)
+                    .single();
+
+                if (fetchError) throw fetchError;
+
+                let newDate = new Date();
+                if (user.plan_end_date) {
+                    const currentEndDate = new Date(user.plan_end_date);
+                    // If the plan is still active, add time to the current end date
+                    if (currentEndDate > newDate) {
+                        newDate = currentEndDate;
+                    }
+                }
+                
+                // Add time depending on action
+                if (body.updates.action === 'renew') {
+                    newDate.setMonth(newDate.getMonth() + 1);
+                } else if (body.updates.action === 'trial') {
+                    newDate.setDate(newDate.getDate() + 7);
+                }
+
+                const { data, error } = await supabase
+                    .from('profiles')
+                    .update({ plan_end_date: newDate.toISOString() })
+                    .eq('id', body.id)
+                    .select()
+                    .single();
+
+                if (error) throw error;
+                return NextResponse.json(data);
+            }
+
+            // Update existing profile (normal updates)
             const { data, error } = await supabase
                 .from('profiles')
                 .update(body.updates)

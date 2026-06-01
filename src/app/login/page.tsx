@@ -20,23 +20,37 @@ export default function LoginPage() {
 
     // Validación de credenciales solicitadas
     const validUsers = [
-      { id: "d6ad5552-f84f-4f5f-aa97-86fca5a5402a", email: "admin@gmail.com", password: "123455", role: "admin", name: "Alex OD" },
-      { id: "d6ad5552-f84f-4f5f-aa97-86fca5a5402a", email: "kenedy@gmail.com", password: "123456", role: "cliente", name: "Kenedy" }
+      { email: "admin@gmail.com", password: "123455", role: "admin", name: "Alex OD" },
+      { email: "kenedy@gmail.com", password: "123456", role: "cliente", name: "Kenedy" }
     ];
 
-    const user = validUsers.find(u => u.email === email && u.password === password);
+    const mockUser = validUsers.find(u => u.email === email && u.password === password);
 
+    if (!mockUser) {
+      setError("Credenciales incorrectas. Por favor intenta de nuevo.");
+      setIsLoading(false);
+      return;
+    }
 
-    setTimeout(() => {
-      if (user) {
-        // Guardar sesión local
-        localStorage.setItem("user", JSON.stringify(user));
-        router.push("/dashboard");
-      } else {
-        setError("Credenciales incorrectas. Por favor intenta de nuevo.");
+    try {
+      const res = await fetch("/api/clients");
+      const clients = await res.json();
+      
+      const realProfile = clients.find((c: any) => c.email === email);
+      
+      if (!realProfile) {
+        setError(`El correo ${email} no existe en la Base de Datos. Pídele al Admin que lo cree.`);
         setIsLoading(false);
+        return;
       }
-    }, 1000);
+
+      const finalUser = { ...mockUser, id: realProfile.id };
+      localStorage.setItem("user", JSON.stringify(finalUser));
+      router.push("/dashboard");
+    } catch (err) {
+      setError("Error conectando con la base de datos.");
+      setIsLoading(false);
+    }
   };
 
   return (

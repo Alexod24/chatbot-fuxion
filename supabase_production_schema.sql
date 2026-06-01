@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   role TEXT DEFAULT 'client' CHECK (role IN ('admin', 'client')),
   is_active BOOLEAN DEFAULT true,
   whatsapp_client_id TEXT UNIQUE, -- ID para la sesión de whatsapp-web.js
+  plan_end_date TIMESTAMP WITH TIME ZONE, -- Fecha límite del plan del cliente
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -74,8 +75,8 @@ ON public.usage_logs FOR SELECT USING (
 CREATE OR REPLACE FUNCTION public.handle_new_user() 
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, email, full_name, role)
-  VALUES (new.id, new.email, new.raw_user_meta_data->>'full_name', 'client');
+  INSERT INTO public.profiles (id, email, full_name, role, plan_end_date)
+  VALUES (new.id, new.email, new.raw_user_meta_data->>'full_name', 'client', NULL);
   
   INSERT INTO public.bot_configs (user_id, expert_prompt)
   VALUES (new.id, 'Eres un asesor experto de ventas para Fuxion.');

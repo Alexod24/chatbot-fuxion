@@ -90,10 +90,57 @@ class WhatsAppManager {
         this.messageBuffers = new Map(); // Map<chatId, string> - Acumulador de mensajes
         this.messageTimers = new Map(); // Map<chatId, Timeout> - Temporizadores de espera
         this.activePromises = new Map(); // Map<chatId, Promise> - Colas de procesamiento para serialización
+        this.catalogs = new Map(); // Map<userId, Array> - Caché del catálogo de productos en memoria
+        this.sentAudios = new Map(); // Map<chatId, Set<string>> - Registro de audios enviados en esta sesión
         
         // Limpiar mensajes procesados cada 30 minutos
         setInterval(() => this.processedMessages.clear(), 30 * 60 * 1000);
     }
+
+    /**
+     * Comprueba si un audio ya fue enviado a un chat JID usando memoria de sesión, historial de texto o mensajes previos.
+     */
+    hasAudioBeenSent(chatId, audioName, history, fetchedMessages = []) {
+        const nameUpper = audioName.toUpperCase();
+        
+        // 1. Verificar en memoria de la sesión activa
+        const sessionSent = this.sentAudios.get(chatId);
+        if (sessionSent && sessionSent.has(nameUpper)) {
+            return true;
+        }
+
+        // 2. Verificar en el historial de mensajes local en memoria (buscar tag [AUDIO:name])
+        if (history && history.length > 0) {
+            const regex = new RegExp(`\\[\\s*(?:ENVIAR_AUDIO|AUDIO)\\s*:\\s*${audioName}\\s*\\]`, 'i');
+            for (const h of history) {
+                if (h.role === 'assistant' && regex.test(h.content)) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Verificar en mensajes recuperados de WhatsApp (si es el audio de llamada, cualquier audio de salida se considera duplicado)
+        if (nameUpper === 'LLAMADA' && fetchedMessages && fetchedMessages.length > 0) {
+            for (const msg of fetchedMessages) {
+                if (msg.fromMe && (msg.type === 'audio' || msg.type === 'ptt')) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Registra un audio como enviado en la sesión activa para un chat JID.
+     */
+    markAudioAsSent(chatId, audioName) {
+        if (!this.sentAudios.has(chatId)) {
+            this.sentAudios.set(chatId, new Set());
+        }
+        this.sentAudios.get(chatId).add(audioName.toUpperCase());
+    }
+
 
     /**
      * Initializes a WhatsApp client for a specific user.
@@ -310,37 +357,133 @@ class WhatsAppManager {
             const { data: config } = await supabase.from('bot_configs').select('expert_prompt').eq('user_id', targetId).single();
             const systemPrompt = config?.expert_prompt || "Eres Alex, asesor de Fuxion.";
 
+            // --- VERIFICACIÓN DE SUSCRIPCIÓN ACTIVA ---
+            const { data: profile } = await supabase.from('profiles').select('plan_end_date').eq('id', targetId).single();
+            if (!profile || !profile.plan_end_date) {
+                console.log(`[Subscription] No plan active for user ${targetId}. Ignoring message from ${originalMsg.from}`);
+                return;
+            }
+            const planEnd = new Date(profile.plan_end_date);
+            if (planEnd < new Date()) {
+                console.log(`[Subscription] Plan expired for user ${targetId}. Ignoring message from ${originalMsg.from}`);
+                return; // Ignore the message to save tokens
+            }
+
             const chat = await originalMsg.getChat();
             await chat.sendStateTyping();
 
-            if (!this.histories.has(originalMsg.from)) this.histories.set(originalMsg.from, []);
+            let fetchedMessages = [];
+            if (!this.histories.has(originalMsg.from)) {
+                let fetchedHistory = [];
+                try {
+                    console.log(`[History] Fetching recent messages for JID: ${originalMsg.from}...`);
+                    fetchedMessages = await chat.fetchMessages({ limit: 10 });
+                    for (const msg of fetchedMessages) {
+                        if (msg.id._serialized === originalMsg.id._serialized) {
+                            continue;
+                        }
+                        if (msg.body && typeof msg.body === 'string' && msg.body.trim() !== '') {
+                            const role = msg.fromMe ? "assistant" : "user";
+                            fetchedHistory.push({ role, content: msg.body });
+                        }
+                    }
+                    console.log(`[History] Recovered ${fetchedHistory.length} messages from chat.`);
+                    fetchedHistory = fetchedHistory.slice(-6);
+                } catch (err) {
+                    console.error("[History] Error fetching messages from chat:", err);
+                }
+                this.histories.set(originalMsg.from, fetchedHistory);
+            }
             const history = this.histories.get(originalMsg.from);
 
             // Ahorro de tokens / Contexto dinámico
             const historyText = history.map(h => h.content).join(" ");
-            const fullContextText = (messageBody + " " + historyText).toUpperCase();
-            const keywords = ['DIGESTION', 'PESO', 'ENERGIA', 'PRUNEX', 'THERMO', 'VITA', 'FLORA', 'NOCARB', 'ON'];
-            const foundKeywords = keywords.filter(k => fullContextText.includes(k));
-            
-            let dynamicContext = "";
-            if (foundKeywords.length > 0) {
-                const { data: knowledge } = await supabase.from('bot_knowledge').select('content').eq('user_id', targetId).in('keyword', foundKeywords);
-                if (knowledge) dynamicContext = "\n\nAPOYO:\n" + knowledge.map(k => k.content).join("\n");
+            const fullContextText = (messageBody + " " + historyText).toLowerCase();
+
+            // Cargar catálogo de Supabase en memoria si no está cacheado
+            if (!this.catalogs.has(targetId)) {
+                try {
+                    console.log(`[Catalog] Fetching catalog for user ${targetId} from Supabase...`);
+                    const { data: catalogRecord } = await supabase
+                        .from('bot_knowledge')
+                        .select('content')
+                        .eq('user_id', targetId)
+                        .eq('keyword', 'CATALOGO')
+                        .single();
+                    if (catalogRecord && catalogRecord.content) {
+                        const parsed = JSON.parse(catalogRecord.content);
+                        this.catalogs.set(targetId, parsed);
+                        console.log(`[Catalog] Loaded ${parsed.length} products into memory cache for user ${targetId}.`);
+                    } else {
+                        this.catalogs.set(targetId, []);
+                    }
+                } catch (err) {
+                    console.error("[Catalog] Error fetching catalog:", err);
+                    this.catalogs.set(targetId, []);
+                }
             }
+
+            const catalog = this.catalogs.get(targetId) || [];
+            let dynamicContext = "";
+            let matchedProducts = [];
+
+            if (catalog.length > 0) {
+                // Coincidencia de palabras clave dinámica contra el catálogo
+                for (const prod of catalog) {
+                    const hasMatch = prod.keywords.some(kw => {
+                        const cleanKw = kw.toLowerCase().trim();
+                        return fullContextText.includes(cleanKw);
+                    });
+                    if (hasMatch) {
+                        matchedProducts.push(prod);
+                    }
+                }
+                if (matchedProducts.length > 0) {
+                    dynamicContext = "\n\nAPOYO:\n" + matchedProducts.map(p => {
+                        return `- ${p.nombre}: ${p.desc} Precios: ${p.precio}.`;
+                    }).join("\n");
+                    console.log(`[Catalog] Matched ${matchedProducts.length} products: ${matchedProducts.map(p => p.nombre).join(', ')}`);
+                }
+            } else {
+                // Fallback a consulta tradicional si no hay catálogo
+                const legacyKeywords = ['DIGESTION', 'PESO', 'ENERGIA', 'PRUNEX', 'THERMO', 'VITA', 'FLORA', 'NOCARB', 'ON'];
+                const foundKeywords = legacyKeywords.filter(k => fullContextText.toUpperCase().includes(k));
+                if (foundKeywords.length > 0) {
+                    const { data: knowledge } = await supabase.from('bot_knowledge').select('content').eq('user_id', targetId).in('keyword', foundKeywords);
+                    if (knowledge) dynamicContext = "\n\nAPOYO:\n" + knowledge.map(k => k.content).join("\n");
+                }
+            }
+
+            // Verificar si el audio de llamada ya fue enviado anteriormente
+            const isLlamadaAudioSent = this.hasAudioBeenSent(originalMsg.from, 'llamada', history, fetchedMessages);
 
             const systemConstraint = `
 [RESTRICCIÓN CRÍTICA DE RESPUESTA]
-1. Respuestas basadas únicamente en Fuxion: Tus respuestas deben centrarse ÚNICAMENTE en los productos de Fuxion, estreñimiento, hígado graso, peso, energía, limpieza de colon o temas de salud y bienestar del catálogo de Fuxion provistos en las instrucciones y en la base de datos (APOYO).
+1. Respuestas basadas únicamente en Fuxion: Tus respuestas deben centrarse ÚNICAMENTE en el catálogo de productos de Fuxion provistos en la sección APOYO y el objetivo de salud o bienestar del cliente. Queda ESTRICTAMENTE PROHIBIDO recomendar, mencionar o cotizar cualquier producto que NO aparezca listado en la sección APOYO. No menciones otras enfermedades, síntomas o beneficios que no estén en la sección APOYO o que el cliente no te haya expresado.
 2. Prohibida la conversación casual: Tienes ESTRICTAMENTE PROHIBIDO responder con frases de relleno, preguntas generales de chat, cháchara sobre la vida personal del usuario (por ejemplo, preguntar cómo fue su día, cómo está el clima, de dónde es, chistes, anécdotas, etc.).
-3. Saludo e inicio enfocado: Si el usuario te saluda ("Hola", "Buenas", etc.), debes iniciar tu respuesta saludando con un "Hola" inicial y presentarte como Alex (ejemplo: "Hola, soy Alex..."), e inmediatamente haz una pregunta sobre su salud o digestión para iniciar el Diagnóstico (Paso 1). Ejemplo: "Hola, soy Alex. Cuéntame, buscas mejorar tu digestión o qué objetivo de salud tienes hoy?".
-4. Comportamiento ante temas fuera de alcance: Si el usuario te pregunta por cualquier tema que no sea de Fuxion o de los productos/temas provistos (por ejemplo, temas personales, de actualidad, chistes, etc.), responde en una única oración corta que solo estás capacitado para asesorarle en productos Fuxion y redirige la conversación.
+3. Saludo e inicio enfocado: Si el usuario te saluda ("Hola", "Buenas", etc.), y NO han coordinado una llamada en el historial, debes iniciar saludando con un "Hola" inicial, presentarte como tu asesor Fuxion (ej: "Hola, te saluda tu asesor Fuxion.") y preguntar qué objetivo de salud, energía o peso busca mejorar (Paso 1). Pero si la llamada ya está agendada/coordinada en el historial de chat (ej: confirmaste que le llamas o agendaste), NO reinicies el flujo ni te presentes de nuevo; solo saluda cordialmente de forma muy humana y confirma que ya está todo listo para la llamada o pregúntale si tiene otra duda antes.
+4. Temas fuera de alcance o dudas sobre quién eres: Si pregunta por temas ajenos a Fuxion o qué/quién eres (ej. "¿qué es eso?"), responde de forma muy humana y natural como asesor independiente Fuxion (ej: "Te saluda tu asesor de las bebidas Fuxion y te ayudo con tus dudas o entrega. Qué objetivo de salud o bienestar te gustaría mejorar hoy?"). Jamás digas "soy un bot", "estoy capacitado para", "soy un modelo de lenguaje" o similares.
 5. Sigue al pie de la letra las REGLAS del flujo.
 6. SÉ EXTREMADAMENTE BREVE Y CONCISO: Tus respuestas deben tener un máximo de 1 a 2 oraciones muy cortas (menos de 30 palabras en total). Simula mensajes de WhatsApp reales, que son rápidos, directos y van al grano. Evita explicaciones largas, detalles innecesarios o textos extensos.
 7. REGLAS DE HUMANIZACIÓN: Respeta estrictamente las prohibiciones de tu instrucción (Cero listas, cero viñetas, PROHIBIDO usar saludos genéricos como "Cómo estás hoy?" o "Necesitas algo?", y PROHIBIDO usar la palabra "gustaría" o variaciones de ella. En su lugar, usa preguntas directas como "Buscas...?", "Deseas...?", o "Quieres...?"). Queda ESTRICTAMENTE PROHIBIDO utilizar los signos de interrogación y exclamación de apertura (¿ y ¡).
 `;
 
+            let promptToUse = systemPrompt;
+            let audioConstraint = "";
+            if (isLlamadaAudioSent) {
+                promptToUse = promptToUse.replace(
+                    /- P3\s*\(PRECIO\):.*/gi,
+                    '- P3 (PRECIO): Si pregunta precio (o dice sí en P2), da el precio exacto del producto y, obligatoriamente en el mismo mensaje, coordina la hora para la llamada directamente por chat (texto) preguntando: "A qué hora te acomoda la llamada hoy?" o "Te puedo llamar en 15 minutos?". Queda TOTALMENTE PROHIBIDO usar la etiqueta [AUDIO:llamada] o cualquier etiqueta de audio.'
+                );
+                audioConstraint = `
+[REGLA DE CONEXIÓN POR TEXTO (SOBREESCRIBE P3 Y REGLAS DE FLUJO)]
+- Ya se envió el audio de llamada anteriormente. Queda TOTALMENTE PROHIBIDO usar la etiqueta [AUDIO:llamada] o cualquier etiqueta de audio.
+- Al dar el precio de cualquier producto, es obligatorio coordinar la hora de la llamada en el mismo mensaje. Debes terminar tu respuesta preguntando por texto: "A qué hora te acomoda la llamada hoy?" o "Te puedo llamar en 15 minutos?". No uses ninguna otra pregunta al final.
+`;
+            }
+
             const now = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' });
-            const finalPrompt = systemPrompt + "\n" + systemConstraint + dynamicContext + `\n\nHORA ACTUAL EN PERÚ: ${now}`;
+            const finalPrompt = promptToUse + "\n" + systemConstraint + dynamicContext + audioConstraint + `\n\nHORA ACTUAL EN PERÚ: ${now}`;
 
             history.push({ role: "user", content: messageBody });
             if (history.length > 6) history.shift();
@@ -398,7 +541,16 @@ class WhatsAppManager {
                 const selfJid = client.info && client.info.wid ? client.info.wid._serialized : null;
                 if (selfJid) {
                     const horaPactada = agendarMatch[1].trim();
-                    const productoInteres = agendarMatch[2].trim();
+                    let productoInteres = agendarMatch[2].trim();
+                    
+                    // Si el modelo dejó el marcador <producto> literal, lo reemplazamos con los productos detectados
+                    if (productoInteres.includes('<') || productoInteres.includes('>') || productoInteres.toLowerCase() === 'producto' || productoInteres === '') {
+                        if (matchedProducts && matchedProducts.length > 0) {
+                            productoInteres = matchedProducts.map(p => p.nombre).join(', ');
+                        } else {
+                            productoInteres = 'Productos Fuxion';
+                        }
+                    }
                     
                     // Ejecutar de forma asíncrona para no bloquear el flujo principal de respuesta al cliente
                     (async () => {
@@ -508,14 +660,22 @@ class WhatsAppManager {
 
             if (dynamicMatch) {
                 const searchName = dynamicMatch[1].trim().toUpperCase();
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                await chat.sendStateRecording();
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                // Salvaguarda: Verificar si el audio ya fue enviado anteriormente
+                const alreadySent = this.hasAudioBeenSent(originalMsg.from, searchName, history, fetchedMessages);
+                if (alreadySent) {
+                    console.log(`[AUDIO] Salvaguarda: El audio ${searchName} ya fue enviado anteriormente a ${originalMsg.from}. No se reenviará.`);
+                } else {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await chat.sendStateRecording();
+                    await new Promise(resolve => setTimeout(resolve, 3000));
 
-                const { data: audioRecord } = await supabase.from('bot_audios').select('message_id').eq('user_id', targetId).eq('name', searchName).single();
-                if (audioRecord) {
-                    const messageToForward = await client.getMessageById(audioRecord.message_id);
-                    await messageToForward.forward(originalMsg.from);
+                    const { data: audioRecord } = await supabase.from('bot_audios').select('message_id').eq('user_id', targetId).eq('name', searchName).single();
+                    if (audioRecord) {
+                        const messageToForward = await client.getMessageById(audioRecord.message_id);
+                        await messageToForward.forward(originalMsg.from);
+                        this.markAudioAsSent(originalMsg.from, searchName);
+                        console.log(`[AUDIO] Audio ${searchName} enviado por primera vez a ${originalMsg.from}`);
+                    }
                 }
             }
             await chat.clearState();

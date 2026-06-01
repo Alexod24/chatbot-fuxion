@@ -3,15 +3,16 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { 
-  Bot, 
-  LayoutDashboard, 
-  Settings, 
-  BarChart, 
-  MessageSquare, 
+import {
+  Bot,
+  LayoutDashboard,
+  Settings,
+  BarChart,
+  MessageSquare,
   LogOut,
   Zap,
-  Users
+  Users,
+  Calendar
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -20,8 +21,9 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
   { icon: Bot, label: "Bot Config", href: "/dashboard/bot" },
   { icon: MessageSquare, label: "Mensajes", href: "/dashboard/messages" },
+  { icon: Calendar, label: "Mi Plan", href: "/dashboard/plan" },
   { icon: BarChart, label: "Estadísticas", href: "/dashboard/stats" },
-  { icon: Zap, label: "Multimedia", href: "/dashboard/media" },
+  { icon: Zap, label: "Mis audios", href: "/dashboard/media" },
   { icon: Users, label: "Clientes (Admin)", href: "/dashboard/clients" },
   { icon: Settings, label: "Configuración", href: "/dashboard/settings" },
 ];
@@ -29,6 +31,37 @@ const menuItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [diffDays, setDiffDays] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    const userStr = typeof window !== 'undefined' ? localStorage.getItem("user") : null;
+    let uId = 'default';
+    if (userStr) {
+      try { uId = JSON.parse(userStr).id || 'default'; } catch (e) { }
+    }
+
+    if (uId !== 'default') {
+      const fetchPlan = async () => {
+        try {
+          const res = await fetch(`/api/profile?userId=${uId}`);
+          const data = await res.json();
+          if (data.plan_end_date) {
+            const planEnd = new Date(data.plan_end_date);
+            const now = new Date();
+            const diffTime = planEnd.getTime() - now.getTime();
+            setDiffDays(Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+          } else {
+            setDiffDays(0);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      fetchPlan();
+      const interval = setInterval(fetchPlan, 30000);
+      return () => clearInterval(interval);
+    }
+  }, []);
 
   const handleLogout = () => {
     // Aquí se limpiaría la sesión en un caso real
@@ -53,8 +86,8 @@ export function Sidebar() {
               href={item.href}
               className={cn(
                 "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group relative",
-                isActive 
-                  ? "text-white bg-indigo-600/10" 
+                isActive
+                  ? "text-white bg-indigo-600/10"
                   : "text-muted-foreground hover:text-white hover:bg-white/5"
               )}
             >
@@ -63,7 +96,7 @@ export function Sidebar() {
                 isActive ? "text-indigo-400" : "group-hover:text-white"
               )} />
               <span className="font-medium">{item.label}</span>
-              
+
               {isActive && (
                 <motion.div
                   layoutId="active-pill"
@@ -79,13 +112,17 @@ export function Sidebar() {
       <div className="p-4 mt-auto">
         <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/20 mb-4">
           <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wider mb-1">Plan Pro</p>
-          <p className="text-sm text-white/80 mb-3">Tu membresía vence en 24 días.</p>
-          <button className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors">
+          <p className="text-sm text-white/80 mb-3">
+            {diffDays === null ? "Cargando plan..." :
+              diffDays > 0 ? `Tu membresía vence en ${diffDays} días.` :
+                "Tu plan ha expirado o está inactivo."}
+          </p>
+          <Link href="/dashboard/plan" className="w-full flex items-center justify-center py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors">
             Renovar Ahora
-          </button>
+          </Link>
         </div>
-        
-        <button 
+
+        <button
           onClick={handleLogout}
           className="flex items-center gap-3 px-4 py-3 w-full text-muted-foreground hover:text-red-400 transition-colors"
         >

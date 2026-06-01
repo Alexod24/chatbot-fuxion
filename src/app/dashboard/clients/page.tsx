@@ -80,6 +80,24 @@ export default function ClientsPage() {
     fetchClients();
   };
 
+  const handleRenew = async (id: any, action: 'renew' | 'trial') => {
+    const confirmMessage = action === 'renew' 
+      ? "¿Estás seguro de que deseas renovar 1 mes para este cliente?" 
+      : "¿Estás seguro de que deseas dar 7 días de prueba a este cliente?";
+      
+    if (!confirm(confirmMessage)) return;
+    try {
+      await fetch("/api/clients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, updates: { action } })
+      });
+      fetchClients();
+    } catch (err) {
+      console.error("Error updating client plan:", err);
+    }
+  };
+
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -202,7 +220,7 @@ export default function ClientsPage() {
                   <th className="px-8 py-4">WhatsApp ID</th>
                   <th className="px-8 py-4">Fecha Creación</th>
                   <th className="px-8 py-4">Rol</th>
-                  <th className="px-8 py-4">Estado</th>
+                  <th className="px-8 py-4">Plan Restante</th>
                   <th className="px-8 py-4 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -236,21 +254,61 @@ export default function ClientsPage() {
                       </span>
                     </td>
                     <td className="px-8 py-6">
-                      <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                        client.is_active ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
-                      }`}>
-                        {client.is_active ? 'Activo' : 'Suspendido'}
-                      </span>
+                      {(() => {
+                        if (!client.plan_end_date) return <span className="text-muted-foreground text-xs">Sin Plan</span>;
+                        const planEnd = new Date(client.plan_end_date);
+                        const now = new Date();
+                        const diffTime = planEnd.getTime() - now.getTime();
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        
+                        let badgeClass = 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20';
+                        let label = `${diffDays} días`;
+                        
+                        if (diffDays <= 0) {
+                          badgeClass = 'bg-red-500/10 text-red-500 border-red-500/20';
+                          label = 'Expirado';
+                        } else if (diffDays <= 3) {
+                          badgeClass = 'bg-orange-500/10 text-orange-500 border-orange-500/20';
+                        }
+
+                        return (
+                          <div className="flex flex-col items-start gap-1">
+                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${badgeClass}`}>
+                              {label}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">
+                              Hasta {planEnd.toLocaleDateString()}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-8 py-6 text-right">
-                      <button 
-                        onClick={() => toggleStatus(client.id, client.is_active)}
-                        className={`p-2 rounded-xl transition-all ${
-                          client.is_active ? 'bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white'
-                        }`}
-                      >
-                        {client.is_active ? <XCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button 
+                          onClick={() => handleRenew(client.id, 'trial')}
+                          title="Dar 7 Días de Prueba"
+                          className="px-3 py-1 text-xs font-bold rounded-lg bg-orange-500/10 text-orange-400 border border-orange-500/20 hover:bg-orange-500 hover:text-white transition-all"
+                        >
+                          +7 Días
+                        </button>
+                        <button 
+                          onClick={() => handleRenew(client.id, 'renew')}
+                          title="Renovar 1 Mes"
+                          className="px-3 py-1 text-xs font-bold rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500 hover:text-white transition-all"
+                        >
+                          +1 Mes
+                        </button>
+                        <button 
+                          onClick={() => toggleStatus(client.id, client.is_active)}
+                          title={client.is_active ? 'Suspender' : 'Activar'}
+                          className={`p-2 rounded-xl transition-all ${
+                            client.is_active ? 'bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white'
+                          }`}
+                        >
+                          {client.is_active ? <XCircle className="w-5 h-5" /> : <CheckCircle className="w-5 h-5" />}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
